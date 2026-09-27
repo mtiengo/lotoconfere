@@ -52,7 +52,7 @@ def test_playable_bet_sizes_are_accepted(size):
 
 @pytest.mark.parametrize("size", [5, 21])
 def test_unplayable_bet_sizes_are_refused(size):
-    with pytest.raises(InvalidBetError, match="numeros"):
+    with pytest.raises(InvalidBetError, match="números"):
         validate_bet(Bet(game="megasena", numbers=tuple(range(1, size + 1))))
 
 
@@ -63,7 +63,7 @@ def test_a_repeated_number_is_refused():
 
 @pytest.mark.parametrize("stray", [0, 61, -1])
 def test_a_number_outside_the_range_is_refused(stray):
-    with pytest.raises(InvalidBetError, match="numeros vao de"):
+    with pytest.raises(InvalidBetError, match="números vão de"):
         validate_bet(Bet(game="megasena", numbers=(1, 2, 3, 4, 5, stray)))
 
 
@@ -72,7 +72,7 @@ def test_a_real_draw_validates():
 
 
 def test_a_draw_with_the_wrong_count_is_rejected_whole():
-    with pytest.raises(InvalidDrawError, match="6 numeros"):
+    with pytest.raises(InvalidDrawError, match="6 números"):
         validate_draw(a_draw(numbers=(5, 9, 11, 17, 18)))
 
 
@@ -82,12 +82,12 @@ def test_a_draw_with_a_repeated_number_is_rejected():
 
 
 def test_a_draw_out_of_range_is_rejected():
-    with pytest.raises(InvalidDrawError, match="numeros vao de"):
+    with pytest.raises(InvalidDrawError, match="números vão de"):
         validate_draw(a_draw(numbers=(5, 9, 11, 17, 18, 61)))
 
 
 def test_a_nonsense_contest_number_is_rejected():
-    with pytest.raises(InvalidDrawError, match="concurso invalido"):
+    with pytest.raises(InvalidDrawError, match="concurso inválido"):
         validate_draw(a_draw(contest=0))
 
 

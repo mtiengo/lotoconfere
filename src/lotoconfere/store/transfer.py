@@ -66,23 +66,23 @@ def import_bets(raw: bytes | str) -> list[ImportedBet]:
     """Read an exported file back, refusing anything that is not one."""
     data = raw.encode("utf-8") if isinstance(raw, str) else raw
     if len(data) > MAX_IMPORT_BYTES:
-        raise BetFileError("o arquivo e grande demais para ser uma lista de apostas")
+        raise BetFileError("o arquivo é grande demais para ser uma lista de apostas")
     try:
         payload = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        raise BetFileError("o arquivo nao esta em um formato que o LotoConfere entenda") from None
+        raise BetFileError("o arquivo não está em um formato que o LotoConfere entenda") from None
 
     if not isinstance(payload, dict) or FORMAT_KEY not in payload:
-        raise BetFileError("o arquivo nao parece ter sido exportado pelo LotoConfere")
+        raise BetFileError("o arquivo não parece ter sido exportado pelo LotoConfere")
     if payload.get(FORMAT_KEY) != FORMAT:
         raise BetFileError(
-            f"o arquivo esta no formato {payload.get(FORMAT_KEY)!r}, "
-            f"e esta versao le o formato {FORMAT}"
+            f"o arquivo está no formato {payload.get(FORMAT_KEY)!r}, "
+            f"e esta versão lê o formato {FORMAT}"
         )
 
     rows = payload.get("apostas")
     if not isinstance(rows, list):
-        raise BetFileError("o arquivo nao tem uma lista de apostas")
+        raise BetFileError("o arquivo não tem uma lista de apostas")
     if len(rows) > MAX_BETS:
         raise BetFileError("o arquivo tem apostas demais")
     return [_one_bet(row, position) for position, row in enumerate(rows, start=1)]
@@ -96,7 +96,7 @@ def _one_bet(row: object, position: int) -> ImportedBet:
     if not isinstance(name, str) or not name.strip():
         raise BetFileError(f"aposta {position}: falta o nome")
     if len(name) > MAX_NAME_LENGTH:
-        raise BetFileError(f"aposta {position}: o nome e longo demais")
+        raise BetFileError(f"aposta {position}: o nome é longo demais")
 
     game = row.get("jogo")
     if not isinstance(game, str):
@@ -108,7 +108,7 @@ def _one_bet(row: object, position: int) -> ImportedBet:
 
     bet = Bet(
         game=game,
-        numbers=_ints(row.get("numeros"), position, "numeros"),
+        numbers=_ints(row.get("numeros"), position, "números"),
         extra=_text(row.get("extra"), position),
         clovers=_ints(row.get("trevos"), position, "trevos"),
         columns=_columns(row.get("colunas"), position),
@@ -134,7 +134,7 @@ def _ints(value: object, position: int, what: str) -> tuple[int, ...]:
     numbers = []
     for item in value:
         if isinstance(item, bool) or not isinstance(item, int):
-            raise BetFileError(f"aposta {position}: {what} com valor invalido: {item!r}")
+            raise BetFileError(f"aposta {position}: {what} com valor inválido: {item!r}")
         numbers.append(item)
     return tuple(numbers)
 
@@ -159,5 +159,5 @@ def _optional_int(value: object, position: int) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise BetFileError(f"aposta {position}: teimosinha invalida: {value!r}")
+        raise BetFileError(f"aposta {position}: teimosinha inválida: {value!r}")
     return value

@@ -131,7 +131,7 @@ def test_a_bet_that_breaks_its_games_rules_is_refused_by_name():
 
 
 def test_a_number_out_of_range_is_refused():
-    with pytest.raises(BetFileError, match="numeros vao de"):
+    with pytest.raises(BetFileError, match="números vão de"):
         import_bets(a_file(numeros=[1, 2, 3, 4, 5, 99]))
 
 
@@ -143,7 +143,7 @@ def test_numbers_in_the_wrong_shape_are_refused(numeros):
 
 @pytest.mark.parametrize("bad", ["5", True, 1.5, None])
 def test_a_number_that_is_not_a_whole_number_is_refused(bad):
-    with pytest.raises(BetFileError, match="valor invalido"):
+    with pytest.raises(BetFileError, match="valor inválido"):
         import_bets(a_file(numeros=[5, 9, 11, 17, 18, bad]))
 
 
@@ -166,7 +166,7 @@ def test_an_extra_field_of_only_spaces_reads_as_absent():
 
 @pytest.mark.parametrize("bad", [0, -3, "tres", True, 1.5])
 def test_an_impossible_teimosinha_is_refused(bad):
-    with pytest.raises(BetFileError, match="teimosinha invalida"):
+    with pytest.raises(BetFileError, match="teimosinha inválida"):
         import_bets(a_file(teimosinha_inicio=bad))
 
 

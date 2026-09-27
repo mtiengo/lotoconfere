@@ -73,6 +73,10 @@ class GameRules:
     source_url: str
     verified_on: date
     extra_label: str = ""
+    # A closed list of choices for the extra field, when it has one. Dia de
+    # Sorte's months are fixed; Timemania's clubs are not listed here, because
+    # a list of teams invented from memory would refuse somebody's real ticket.
+    extra_options: tuple[str, ...] = ()
     clover_first: int = 0
     clover_last: int = 0
     clover_sizes: tuple[int, ...] = ()
@@ -226,6 +230,21 @@ DIA_DE_SORTE = GameRules(
         TierSpec(faixa=5, label="Mes da Sorte", extra=True),
     ),
     extra_label="Mes da Sorte",
+    # The months as Caixa spells them in its own responses ("Janeiro").
+    extra_options=(
+        "Janeiro",
+        "Fevereiro",
+        "Marco",
+        "Abril",
+        "Maio",
+        "Junho",
+        "Julho",
+        "Agosto",
+        "Setembro",
+        "Outubro",
+        "Novembro",
+        "Dezembro",
+    ),
     source_url="https://loterias.caixa.gov.br/Paginas/Dia-de-Sorte.aspx",
     verified_on=date(2026, 9, 26),
 )
@@ -324,7 +343,7 @@ def _check_range(rules: GameRules, numbers: tuple[int, ...], what: str) -> None:
     stray = [n for n in numbers if not rules.first_number <= n <= rules.last_number]
     if stray:
         raise InvalidBetError(
-            f"{rules.name}: {what} vao de {rules.first_number} a {rules.last_number}, "
+            f"{rules.name}: {what} vão de {rules.first_number} a {rules.last_number}, "
             f"e a aposta tem {sorted(stray)}"
         )
 
@@ -339,11 +358,11 @@ def validate_bet(bet: Bet) -> None:
     if bet.size not in rules.bet_sizes:
         raise InvalidBetError(
             f"{rules.name}: uma aposta tem de {rules.bet_sizes[0]} a "
-            f"{rules.bet_sizes[-1]} numeros, e esta tem {bet.size}"
+            f"{rules.bet_sizes[-1]} números, e esta tem {bet.size}"
         )
     if len(set(bet.numbers)) != bet.size:
-        raise InvalidBetError(f"{rules.name}: a aposta tem numeros repetidos")
-    _check_range(rules, bet.numbers, "os numeros")
+        raise InvalidBetError(f"{rules.name}: a aposta tem números repetidos")
+    _check_range(rules, bet.numbers, "os números")
 
     if rules.shape is Shape.CLOVERS:
         _validate_clovers(bet, rules)
@@ -362,7 +381,7 @@ def _validate_clovers(bet: Bet, rules: GameRules) -> None:
     stray = [c for c in bet.clovers if not rules.clover_first <= c <= rules.clover_last]
     if stray:
         raise InvalidBetError(
-            f"{rules.name}: os trevos vao de {rules.clover_first} a {rules.clover_last}, "
+            f"{rules.name}: os trevos vão de {rules.clover_first} a {rules.clover_last}, "
             f"e a aposta tem {sorted(stray)}"
         )
 
@@ -382,18 +401,18 @@ def _validate_column_bet(bet: Bet, rules: GameRules) -> None:
     if band is None:
         raise InvalidBetError(
             f"{rules.name}: uma aposta tem de {rules.bet_sizes[0]} a "
-            f"{rules.bet_sizes[-1]} numeros, e esta tem {total}"
+            f"{rules.bet_sizes[-1]} números, e esta tem {total}"
         )
     for position, column in enumerate(bet.columns, start=1):
         if not band.per_column_min <= len(column) <= band.per_column_max:
             raise InvalidBetError(
-                f"{rules.name}: com {total} numeros marcados, cada coluna leva de "
+                f"{rules.name}: com {total} números marcados, cada coluna leva de "
                 f"{band.per_column_min} a {band.per_column_max}, e a coluna {position} "
                 f"tem {len(column)}"
             )
         if len(set(column)) != len(column):
-            raise InvalidBetError(f"{rules.name}: a coluna {position} tem numeros repetidos")
-        _check_range(rules, tuple(column), "os numeros")
+            raise InvalidBetError(f"{rules.name}: a coluna {position} tem números repetidos")
+        _check_range(rules, tuple(column), "os números")
 
 
 def validate_draw(draw: Draw) -> None:
@@ -406,7 +425,7 @@ def validate_draw(draw: Draw) -> None:
     rules = rules_for(draw.game)
     where = f"{rules.name} concurso {draw.contest}"
     if draw.contest < 1:
-        raise InvalidDrawError(f"{rules.name}: numero de concurso invalido: {draw.contest}")
+        raise InvalidDrawError(f"{rules.name}: número de concurso inválido: {draw.contest}")
 
     _validate_drawn_numbers(rules, draw.numbers, where)
     if rules.shape is Shape.DOUBLE:
@@ -428,15 +447,15 @@ def validate_draw(draw: Draw) -> None:
 def _validate_drawn_numbers(rules: GameRules, numbers: tuple[int, ...], where: str) -> None:
     if len(numbers) != rules.drawn_count:
         raise InvalidDrawError(
-            f"{where}: o sorteio tem {rules.drawn_count} numeros, e vieram {len(numbers)}"
+            f"{where}: o sorteio tem {rules.drawn_count} números, e vieram {len(numbers)}"
         )
     # Super Sete draws one digit per column, so the same digit twice is ordinary.
     if rules.shape is not Shape.COLUMNS and len(set(numbers)) != len(numbers):
-        raise InvalidDrawError(f"{where}: o sorteio tem numeros repetidos")
+        raise InvalidDrawError(f"{where}: o sorteio tem números repetidos")
     stray = [n for n in numbers if not rules.first_number <= n <= rules.last_number]
     if stray:
         raise InvalidDrawError(
-            f"{where}: os numeros vao de {rules.first_number} a {rules.last_number}, "
+            f"{where}: os números vão de {rules.first_number} a {rules.last_number}, "
             f"e vieram {sorted(stray)}"
         )
 
@@ -453,7 +472,7 @@ def mirror_bet(bet: Bet) -> Bet:
     """
     rules = rules_for(bet.game)
     if not rules.has_mirror:
-        raise InvalidBetError(f"{rules.name} nao tem aposta-espelho")
+        raise InvalidBetError(f"{rules.name} não tem aposta-espelho")
     validate_bet(bet)
     chosen = set(bet.numbers)
     other = tuple(n for n in range(rules.first_number, rules.last_number + 1) if n not in chosen)

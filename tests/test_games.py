@@ -314,7 +314,7 @@ def test_two_numbers_and_no_trevo_pays_nothing():
 
 @pytest.mark.parametrize(
     ("clovers", "match"),
-    [((1,), "trevos"), ((1, 1), "repetidos"), ((1, 9), "trevos vao de")],
+    [((1,), "trevos"), ((1, 1), "repetidos"), ((1, 9), "trevos vão de")],
 )
 def test_a_bad_trevo_selection_is_refused(clovers, match):
     with pytest.raises(InvalidBetError, match=match):
@@ -399,7 +399,7 @@ def test_the_column_breakdown_sums_to_every_embedded_bet():
         # least 2 -- so a single-digit column is out of band, not merely small.
         (((1,), (1, 2, 3), (1, 2, 3), (1, 2, 3), (1, 2), (1, 2), (1, 2)), "cada coluna leva"),
         (((1, 1), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2)), "repetidos"),
-        (((1, 99), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2)), "numeros vao de"),
+        (((1, 99), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2), (1, 2)), "números vão de"),
     ],
 )
 def test_a_bad_super_sete_bet_is_refused(columns, match):

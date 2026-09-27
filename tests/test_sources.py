@@ -181,14 +181,14 @@ def test_a_missing_field_is_refused():
 def test_a_draw_that_breaks_the_rules_is_rejected_not_repaired():
     payload = load("caixa_megasena_3062.json")
     payload["listaDezenas"] = ["05", "09", "11", "17", "18", "99"]
-    with pytest.raises(InvalidDrawError, match="numeros vao de"):
+    with pytest.raises(InvalidDrawError, match="números vão de"):
         caixa.parse(payload, "megasena")
 
 
 def test_a_short_draw_is_rejected():
     payload = load("caixa_megasena_3062.json")
     payload["listaDezenas"] = ["05", "09"]
-    with pytest.raises(InvalidDrawError, match="6 numeros"):
+    with pytest.raises(InvalidDrawError, match="6 números"):
         caixa.parse(payload, "megasena")
 
 
@@ -204,7 +204,7 @@ def test_a_date_that_is_not_ddmmyyyy_is_refused(bad):
 def test_a_dezena_that_is_not_a_number_is_refused(bad):
     payload = load("caixa_megasena_3062.json")
     payload["listaDezenas"] = ["05", "09", "11", "17", "18", bad]
-    with pytest.raises(InvalidDrawError, match="dezena invalida"):
+    with pytest.raises(InvalidDrawError, match="dezena inválida"):
         caixa.parse(payload, "megasena")
 
 
@@ -212,7 +212,7 @@ def test_a_dezena_that_is_not_a_number_is_refused(bad):
 def test_a_contest_number_that_is_not_a_number_is_refused(bad):
     payload = load("caixa_megasena_3062.json")
     payload["numero"] = bad
-    with pytest.raises(InvalidDrawError, match="concurso invalido"):
+    with pytest.raises(InvalidDrawError, match="concurso inválido"):
         caixa.parse(payload, "megasena")
 
 
@@ -234,7 +234,7 @@ def test_a_prize_table_with_the_wrong_number_of_tiers_is_refused():
 def test_a_prize_row_that_is_not_an_object_is_refused():
     payload = load("caixa_megasena_3062.json")
     payload["listaRateioPremio"] = ["6 acertos", "5 acertos", "4 acertos"]
-    with pytest.raises(InvalidDrawError, match="faixa de premio"):
+    with pytest.raises(InvalidDrawError, match="faixa de prêmio"):
         caixa.parse(payload, "megasena")
 
 
@@ -242,7 +242,7 @@ def test_a_prize_row_that_is_not_an_object_is_refused():
 def test_a_prize_value_that_is_not_a_number_is_refused(bad):
     payload = load("caixa_megasena_3062.json")
     payload["listaRateioPremio"][0]["valorPremio"] = bad
-    with pytest.raises(InvalidDrawError, match="valor de premio"):
+    with pytest.raises(InvalidDrawError, match="valor de prêmio"):
         caixa.parse(payload, "megasena")
 
 
@@ -267,7 +267,7 @@ def test_an_unknown_game_is_refused_before_any_request():
 def test_only_the_two_known_hosts_are_allowed():
     http.check_host("https://servicebus2.caixa.gov.br/portaldeloterias/api/megasena/")
     http.check_host("https://loteriascaixa-api.herokuapp.com/api/megasena/latest")
-    with pytest.raises(SourceUnavailableError, match="host nao permitido"):
+    with pytest.raises(SourceUnavailableError, match="host não permitido"):
         http.check_host("https://exemplo.invalido/api/megasena/")
 
 
@@ -302,7 +302,7 @@ def test_a_certificate_failure_says_so_in_plain_words():
 
 def test_a_timeout_says_so():
     client = FakeClient(error=httpx.ConnectTimeout("slow"))
-    with pytest.raises(SourceUnavailableError, match="nao respondeu a tempo"):
+    with pytest.raises(SourceUnavailableError, match="não respondeu a tempo"):
         caixa.CaixaSource(as_client(client)).latest("megasena")
 
 
@@ -395,7 +395,7 @@ def test_a_dezena_list_that_is_not_a_list_is_refused():
 def test_a_prize_table_that_is_not_a_list_is_refused():
     payload = load("caixa_megasena_3062.json")
     payload["listaRateioPremio"] = {"faixa": 1}
-    with pytest.raises(InvalidDrawError, match="tabela de premios"):
+    with pytest.raises(InvalidDrawError, match="tabela de prêmios"):
         caixa.parse(payload, "megasena")
 
 

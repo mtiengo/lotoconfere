@@ -103,7 +103,7 @@ def test_a_file_from_a_newer_version_is_refused_not_opened(tmp_path):
     connection = sqlite3.connect(path)
     connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
     connection.close()
-    with pytest.raises(StoreError, match="versao mais nova"):
+    with pytest.raises(StoreError, match="versão mais nova"):
         Store(path)
 
 

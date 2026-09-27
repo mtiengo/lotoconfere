@@ -49,7 +49,7 @@ def parse_date(value: object, contest: object = "?") -> date:
     try:
         return datetime.strptime(value.strip(), "%d/%m/%Y").date()
     except ValueError:
-        raise InvalidDrawError(f"concurso {contest}: data invalida: {value!r}") from None
+        raise InvalidDrawError(f"concurso {contest}: data inválida: {value!r}") from None
 
 
 def parse_numbers(
@@ -65,32 +65,32 @@ def parse_numbers(
     numbers = []
     for item in value:
         if isinstance(item, bool) or not isinstance(item, int | str):
-            raise InvalidDrawError(f"concurso {contest}: dezena invalida: {item!r}")
+            raise InvalidDrawError(f"concurso {contest}: dezena inválida: {item!r}")
         try:
             numbers.append(int(str(item).strip()))
         except ValueError:
-            raise InvalidDrawError(f"concurso {contest}: dezena invalida: {item!r}") from None
+            raise InvalidDrawError(f"concurso {contest}: dezena inválida: {item!r}") from None
     return tuple(numbers) if keep_order else tuple(sorted(numbers))
 
 
 def parse_contest(value: object) -> int:
     """The contest number, which every other identifier hangs off."""
     if isinstance(value, bool) or not isinstance(value, int | str):
-        raise InvalidDrawError(f"numero de concurso invalido: {value!r}")
+        raise InvalidDrawError(f"número de concurso inválido: {value!r}")
     try:
         return int(value)
     except ValueError:
-        raise InvalidDrawError(f"numero de concurso invalido: {value!r}") from None
+        raise InvalidDrawError(f"número de concurso inválido: {value!r}") from None
 
 
 def parse_money(value: object, contest: object = "?") -> Decimal:
     """A published prize into Decimal, via str so binary floating point never touches money."""
     if isinstance(value, bool) or not isinstance(value, int | float | str):
-        raise InvalidDrawError(f"concurso {contest}: valor de premio invalido: {value!r}")
+        raise InvalidDrawError(f"concurso {contest}: valor de prêmio inválido: {value!r}")
     try:
         return Decimal(str(value))
     except InvalidOperation:
-        raise InvalidDrawError(f"concurso {contest}: valor de premio invalido: {value!r}") from None
+        raise InvalidDrawError(f"concurso {contest}: valor de prêmio inválido: {value!r}") from None
 
 
 def hits_in_label(label: str | None) -> int | None:
@@ -119,7 +119,7 @@ def parse_prizes(
     if not rows:
         return None
     if not isinstance(rows, list):
-        raise InvalidDrawError(f"concurso {contest}: tabela de premios em formato inesperado")
+        raise InvalidDrawError(f"concurso {contest}: tabela de prêmios em formato inesperado")
     if len(rows) != len(rules.tiers):
         raise InvalidDrawError(
             f"concurso {contest}: a tabela tem {len(rows)} faixas, "
@@ -129,7 +129,7 @@ def parse_prizes(
     tiers = []
     for spec, row in zip(rules.tiers, rows, strict=True):
         if not isinstance(row, dict):
-            raise InvalidDrawError(f"concurso {contest}: faixa de premio em formato inesperado")
+            raise InvalidDrawError(f"concurso {contest}: faixa de prêmio em formato inesperado")
         label = text_or_none(row.get(fields.label)) or spec.label
         stated = hits_in_label(label)
         if spec.hits is not None and stated is not None and stated != spec.hits:
@@ -139,7 +139,7 @@ def parse_prizes(
         winners = row.get(fields.winners, 0)
         if isinstance(winners, bool) or not isinstance(winners, int):
             raise InvalidDrawError(
-                f"concurso {contest}: numero de ganhadores invalido em {label!r}"
+                f"concurso {contest}: número de ganhadores inválido em {label!r}"
             )
         tiers.append(
             PrizeTier(

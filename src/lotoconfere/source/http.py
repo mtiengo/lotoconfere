@@ -34,7 +34,7 @@ def check_host(url: str) -> None:
     """Refuse any URL that is not one of the two hosts."""
     host = httpx.URL(url).host
     if host not in ALLOWED_HOSTS:
-        raise SourceUnavailableError(f"host nao permitido: {host}")
+        raise SourceUnavailableError(f"host não permitido: {host}")
 
 
 def get_json(url: str, client: httpx.Client | None = None) -> object:
@@ -73,7 +73,7 @@ def get_json(url: str, client: httpx.Client | None = None) -> object:
     try:
         return json.loads(body)
     except json.JSONDecodeError as error:
-        raise SourceUnavailableError("a resposta nao era JSON valido") from error
+        raise SourceUnavailableError("a resposta não era JSON valido") from error
 
 
 def describe(error: httpx.HTTPError) -> str:
@@ -85,8 +85,8 @@ def describe(error: httpx.HTTPError) -> str:
     cause: BaseException | None = error
     while cause is not None:
         if isinstance(cause, ssl.SSLError):
-            return "nao foi possivel verificar a conexao segura com o servidor"
+            return "não foi possível verificar a conexao segura com o servidor"
         cause = cause.__cause__
     if isinstance(error, httpx.TimeoutException):
-        return "o servidor nao respondeu a tempo"
-    return "nao foi possivel conectar ao servidor"
+        return "o servidor não respondeu a tempo"
+    return "não foi possível conectar ao servidor"
