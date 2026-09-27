@@ -1,0 +1,39 @@
+# Internal working notes and agent material -- the public repo is the product.
+internal_docs/
+CLAUDE.md
+.claude/
+
+# Scratch / throwaway (scripts, notes, suggested commit messages)
+scratch_*
+
+# Secrets / environment. This project needs none, so one appearing here is a bug.
+.env
+.env.*
+
+# Logs (the app writes its own to the user-data directory)
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
