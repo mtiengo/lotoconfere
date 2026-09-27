@@ -1,6 +1,9 @@
 """Entry point: `python -m lotoconfere`, and the `lotoconfere` gui-script."""
 
+import contextlib
+import io
 import sys
+from typing import cast
 
 from lotoconfere.gui.app import run
 from lotoconfere.probe import environment_lines, probe_caixa
@@ -15,9 +18,13 @@ PROBE_FLAG = "--probe"
 def report_probe() -> int:
     """Run the connection check with no GUI; 0 if the call succeeded, 1 if not."""
     # The report is Portuguese and the Windows console is not UTF-8 by default,
-    # which turns every accent into mojibake in a CI log.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    # which turns every accent into mojibake in a CI log. Asked for rather than
+    # checked for: whether stdout can be reconfigured depends on what replaced
+    # it, and a hasattr branch is taken on one machine and not on another.
+    # sys.stdout is typed as TextIO, which does not promise reconfigure; the real
+    # object usually is a TextIOWrapper, and when it is not, suppress covers it.
+    with contextlib.suppress(AttributeError):
+        cast(io.TextIOWrapper, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
     result = probe_caixa()
     for line in (*environment_lines(), result.summary, result.detail):
         print(line)
