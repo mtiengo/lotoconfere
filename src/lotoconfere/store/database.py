@@ -10,6 +10,7 @@ run fetches it again instead of showing an old blank where a prize belongs.
 
 import json
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import dataclass
@@ -132,17 +133,23 @@ class Store:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.path)
+        # The GUI fetches on a worker thread and the store is what it writes to,
+        # so the connection has to be usable from more than the thread that
+        # opened it. sqlite3 refuses that by default; the lock is what makes it
+        # safe, by serialising every statement rather than hoping they do not
+        # overlap.
+        self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
+        self._lock = threading.Lock()
         self._prepare()
 
     def _prepare(self) -> None:
-        with closing(self._connection.cursor()) as cursor:
+        with self._lock, closing(self._connection.cursor()) as cursor:
             found = int(cursor.execute("PRAGMA user_version").fetchone()[0])
             if found > SCHEMA_VERSION:
                 raise StoreError(
-                    f"o arquivo de dados foi criado por uma versao mais nova "
-                    f"(formato {found}, esta versao entende {SCHEMA_VERSION})"
+                    f"o arquivo de dados foi criado por uma versão mais nova "
+                    f"(formato {found}, esta versão entende {SCHEMA_VERSION})"
                 )
             cursor.executescript(SCHEMA)
             self._migrate(cursor, found)
@@ -159,8 +166,14 @@ class Store:
             if "fetched_at" not in columns:
                 cursor.execute("ALTER TABLE cached_draw ADD COLUMN fetched_at TEXT")
 
+    def _read(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
+        """One read, serialised like every other statement."""
+        with self._lock:
+            return self._connection.execute(sql, parameters)
+
     def close(self) -> None:
-        self._connection.close()
+        with self._lock:
+            self._connection.close()
 
     def __enter__(self) -> "Store":
         return self
@@ -176,7 +189,7 @@ class Store:
         The fetch time is what lets the app say "showing saved results from
         dd/mm/yyyy hh:mm" instead of implying the numbers are current.
         """
-        with self._connection as connection:
+        with self._lock, self._connection as connection:
             connection.execute(
                 """
                 INSERT INTO cached_draw
@@ -211,7 +224,7 @@ class Store:
 
     def recall(self, game: str, contest: int) -> Draw | None:
         """A cached draw, or None. The caller decides whether an incomplete one will do."""
-        row = self._connection.execute(
+        row = self._read(
             "SELECT * FROM cached_draw WHERE game = ? AND contest = ?",
             (game, contest),
         ).fetchone()
@@ -219,7 +232,7 @@ class Store:
 
     def incomplete_contests(self, game: str) -> tuple[int, ...]:
         """Contests cached without a prize table, which are worth fetching again."""
-        rows = self._connection.execute(
+        rows = self._read(
             "SELECT contest FROM cached_draw WHERE game = ? AND complete = 0 ORDER BY contest",
             (game,),
         ).fetchall()
@@ -227,7 +240,7 @@ class Store:
 
     def fetched_at(self, game: str, contest: int) -> datetime | None:
         """When one cached contest was downloaded, or None if that is not recorded."""
-        row = self._connection.execute(
+        row = self._read(
             "SELECT fetched_at FROM cached_draw WHERE game = ? AND contest = ?",
             (game, contest),
         ).fetchone()
@@ -242,18 +255,16 @@ class Store:
         downloaded yet, which is a different sentence from an old timestamp.
         """
         if game is None:
-            row = self._connection.execute(
-                "SELECT MAX(fetched_at) AS newest FROM cached_draw"
-            ).fetchone()
+            row = self._read("SELECT MAX(fetched_at) AS newest FROM cached_draw").fetchone()
         else:
-            row = self._connection.execute(
+            row = self._read(
                 "SELECT MAX(fetched_at) AS newest FROM cached_draw WHERE game = ?", (game,)
             ).fetchone()
         return None if row["newest"] is None else datetime.fromisoformat(str(row["newest"]))
 
     def latest_cached(self, game: str) -> int | None:
         """The newest contest held for a game, which is the offline horizon."""
-        row = self._connection.execute(
+        row = self._read(
             "SELECT MAX(contest) AS newest FROM cached_draw WHERE game = ?",
             (game,),
         ).fetchone()
@@ -279,11 +290,11 @@ class Store:
 
     def setting(self, key: str, default: str = "") -> str:
         """One stored preference, or the default when it was never set."""
-        row = self._connection.execute("SELECT value FROM setting WHERE key = ?", (key,)).fetchone()
+        row = self._read("SELECT value FROM setting WHERE key = ?", (key,)).fetchone()
         return default if row is None else str(row["value"])
 
     def set_setting(self, key: str, value: str) -> None:
-        with self._connection as connection:
+        with self._lock, self._connection as connection:
             connection.execute(
                 "INSERT INTO setting (key, value) VALUES (?, ?) "
                 "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -308,7 +319,7 @@ class Store:
         run_count: int | None = None,
     ) -> int:
         """Store a named bet, optionally with an active teimosinha run."""
-        with self._connection as connection:
+        with self._lock, self._connection as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO saved_bet (name, game, numbers, run_start, run_count)
@@ -326,7 +337,7 @@ class Store:
         run_start: int | None = None,
         run_count: int | None = None,
     ) -> None:
-        with self._connection as connection:
+        with self._lock, self._connection as connection:
             connection.execute(
                 """
                 UPDATE saved_bet
@@ -337,12 +348,12 @@ class Store:
             )
 
     def delete_bet(self, bet_id: int) -> None:
-        with self._connection as connection:
+        with self._lock, self._connection as connection:
             connection.execute("DELETE FROM saved_bet WHERE id = ?", (bet_id,))
 
     def saved_bets(self) -> Iterator[SavedBet]:
         """Every saved bet, oldest first."""
-        for row in self._connection.execute("SELECT * FROM saved_bet ORDER BY id").fetchall():
+        for row in self._read("SELECT * FROM saved_bet ORDER BY id").fetchall():
             yield SavedBet(
                 id=int(row["id"]),
                 name=str(row["name"]),
