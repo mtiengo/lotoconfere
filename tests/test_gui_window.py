@@ -526,3 +526,72 @@ def test_clearing_survives_something_that_is_not_a_widget(qtbot):
     box.addStretch(1)
     clear(box)
     assert box.count() == 0
+
+
+# These call what normally runs on the worker thread, directly. Coverage does
+# not see a Qt-created thread on every Python version (quality-gate skill), so a
+# line covered on 3.14 goes missing on 3.12 for a reason unrelated to the code.
+
+
+def test_producing_a_single_contest_yields_one_answer(qtbot, window):
+    import threading
+
+    window.open_game("megasena")
+    screen = window.screens["megasena"]
+    bet = Bet(game="megasena", numbers=DRAWN)
+    produced = list(screen._produce(bet, None, None, threading.Event()))
+    assert len(produced) == 1
+    assert produced[0].outcome is Outcome.CHECKED
+
+
+def test_producing_a_run_yields_one_answer_per_contest(qtbot, window):
+    import threading
+
+    window.open_game("megasena")
+    screen = window.screens["megasena"]
+    bet = Bet(game="megasena", numbers=DRAWN)
+    produced = list(screen._produce(bet, 3060, 3, threading.Event()))
+    assert [a.contest for a in produced] == [3060, 3061, 3062]
+
+
+def test_producing_with_nothing_known_yet_yields_an_unavailable(qtbot, tmp_path):
+    import threading
+
+    from lotoconfere.core.errors import SourceUnavailableError
+    from lotoconfere.gui.window import MainWindow
+
+    class Offline:
+        name = Source.CAIXA
+
+        def latest(self, game):
+            raise SourceUnavailableError("sem rede")
+
+        def contest(self, game, number):
+            raise SourceUnavailableError("sem rede")
+
+    with Store(tmp_path / "nothing.sqlite3") as store:
+        made = MainWindow(Service(store, Offline()), LIGHT)
+        qtbot.addWidget(made)
+        made.open_game("megasena")
+        screen = made.screens["megasena"]
+        bet = Bet(game="megasena", numbers=DRAWN)
+        produced = list(screen._produce(bet, None, None, threading.Event()))
+        assert produced[0].outcome is Outcome.UNAVAILABLE
+        assert produced[0].reason == strings.NEVER_UPDATED
+
+
+def test_the_worker_emits_each_answer_it_is_given(qtbot):
+    from lotoconfere.gui.worker import RunWorker
+
+    answers = [
+        ContestResult(contest=1, outcome=Outcome.PENDING),
+        ContestResult(contest=2, outcome=Outcome.PENDING),
+    ]
+    worker = RunWorker(lambda: iter(answers))
+    seen: list[ContestResult] = []
+    worker.found.connect(seen.append)
+    finished: list[int] = []
+    worker.finished.connect(lambda: finished.append(1))
+    worker.run()
+    assert seen == answers
+    assert finished == [1]
