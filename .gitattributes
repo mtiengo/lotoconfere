@@ -17,3 +17,8 @@
 
 # Inno Setup's compiler is Windows-only.
 *.iss  text eol=crlf
+
+# Recorded endpoint responses are evidence, not text: Caixa sends CRLF inside its
+# JSON, and normalising it rewrites the bytes the fixtures were checksummed on.
+# Diffs stay readable; only the line-ending conversion is off.
+tests/fixtures/** -text
