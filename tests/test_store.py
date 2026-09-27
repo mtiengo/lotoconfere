@@ -149,3 +149,127 @@ def test_a_name_with_a_quote_in_it_is_just_a_name(store):
     saved = list(store.saved_bets())
     assert len(saved) == 1
     assert saved[0].name == nasty
+
+
+# --- when a cached result was downloaded -------------------------------------
+
+
+def test_a_cached_draw_records_when_it_was_downloaded(store):
+    from datetime import UTC, datetime
+
+    when = datetime(2026, 9, 24, 21, 30, tzinfo=UTC)
+    store.remember(a_draw(), fetched_at=when)
+    assert store.fetched_at("megasena", 3062) == when
+
+
+def test_the_fetch_time_defaults_to_now(store):
+    from datetime import UTC, datetime
+
+    before = datetime.now(UTC)
+    store.remember(a_draw())
+    recorded = store.fetched_at("megasena", 3062)
+    assert recorded is not None
+    assert before <= recorded <= datetime.now(UTC)
+
+
+def test_a_contest_that_was_never_cached_has_no_fetch_time(store):
+    assert store.fetched_at("megasena", 1) is None
+
+
+def test_the_last_update_is_the_newest_download(store):
+    from datetime import UTC, datetime
+
+    old = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    new = datetime(2026, 9, 24, 21, 30, tzinfo=UTC)
+    store.remember(a_draw(contest=3060), fetched_at=old)
+    store.remember(a_draw(contest=3062), fetched_at=new)
+    assert store.last_updated("megasena") == new
+    assert store.last_updated() == new
+
+
+def test_nothing_downloaded_yet_is_not_an_old_timestamp(store):
+    # None and "a long time ago" are different sentences on screen.
+    assert store.last_updated() is None
+    assert store.last_updated("megasena") is None
+
+
+def test_a_version_one_file_is_migrated_and_its_rows_kept(tmp_path):
+    # Files written before the fetch time existed must still open, with their
+    # cached contests intact and an unknown download time.
+    import sqlite3
+
+    path = tmp_path / "old.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE cached_draw (
+            game TEXT NOT NULL, contest INTEGER NOT NULL, drawn_on TEXT NOT NULL,
+            numbers TEXT NOT NULL, second_numbers TEXT, extra TEXT,
+            clovers TEXT NOT NULL DEFAULT '[]', prizes TEXT, source TEXT NOT NULL,
+            complete INTEGER NOT NULL, PRIMARY KEY (game, contest)
+        );
+        INSERT INTO cached_draw VALUES
+            ('megasena', 3062, '2026-09-24', '[5,9,11,17,18,38]', NULL, NULL,
+             '[]', NULL, 'caixa', 0);
+        PRAGMA user_version = 1;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with Store(path) as migrated:
+        kept = migrated.recall("megasena", 3062)
+        assert kept is not None
+        assert kept.numbers == (5, 9, 11, 17, 18, 38)
+        assert migrated.fetched_at("megasena", 3062) is None
+
+
+# --- settings -----------------------------------------------------------------
+
+
+def test_a_setting_survives_and_can_be_changed(store):
+    assert store.setting("qualquer", "padrao") == "padrao"
+    store.set_setting("qualquer", "valor")
+    assert store.setting("qualquer") == "valor"
+    store.set_setting("qualquer", "outro")
+    assert store.setting("qualquer") == "outro"
+
+
+def test_the_mirror_is_off_until_someone_turns_it_on(store):
+    from lotoconfere.store.database import USE_MIRROR
+
+    assert store.flag(USE_MIRROR) is False
+    store.set_flag(USE_MIRROR, True)
+    assert store.flag(USE_MIRROR) is True
+    store.set_flag(USE_MIRROR, False)
+    assert store.flag(USE_MIRROR) is False
+
+
+def test_a_flag_that_was_never_set_takes_its_default(store):
+    assert store.flag("novo", default=True) is True
+    assert store.flag("novo") is False
+
+
+def test_a_half_migrated_file_is_not_migrated_twice(tmp_path):
+    # If the process died between the ALTER and the version bump, the next open
+    # sees version 1 with the column already there. Adding it again would raise.
+    import sqlite3
+
+    path = tmp_path / "half.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE cached_draw (
+            game TEXT NOT NULL, contest INTEGER NOT NULL, drawn_on TEXT NOT NULL,
+            numbers TEXT NOT NULL, second_numbers TEXT, extra TEXT,
+            clovers TEXT NOT NULL DEFAULT '[]', prizes TEXT, source TEXT NOT NULL,
+            complete INTEGER NOT NULL, fetched_at TEXT, PRIMARY KEY (game, contest)
+        );
+        PRAGMA user_version = 1;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with Store(path) as reopened:
+        assert reopened.last_updated() is None

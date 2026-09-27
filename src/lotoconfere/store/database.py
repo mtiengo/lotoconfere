@@ -13,7 +13,7 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -26,9 +26,17 @@ APP_NAME = "LotoConfere"
 APP_AUTHOR = "mtiengo"
 DATABASE_NAME = "lotoconfere.sqlite3"
 
+# Stored preferences, by name. The mirror is off unless someone turns it on.
+USE_MIRROR = "usar_espelho"
+YES = "sim"
+NO = "nao"
+
 # Bumped only when the schema changes in a way older files cannot be read as.
-# A file from the future is refused rather than opened hopefully.
-SCHEMA_VERSION = 1
+# A file from the future is refused rather than opened hopefully; an older one
+# is migrated in _prepare.
+#   2: cached_draw.fetched_at, so the app can say when its offline copy is from.
+SCHEMA_VERSION = 2
+VERSION_WITH_FETCH_TIME = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cached_draw (
@@ -42,7 +50,15 @@ CREATE TABLE IF NOT EXISTS cached_draw (
     prizes      TEXT,
     source      TEXT    NOT NULL,
     complete    INTEGER NOT NULL,
+    -- Nullable: rows written by a version 1 file predate this column, and an
+    -- unknown fetch time must read as unknown rather than as "just now".
+    fetched_at  TEXT,
     PRIMARY KEY (game, contest)
+);
+
+CREATE TABLE IF NOT EXISTS setting (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS saved_bet (
@@ -129,10 +145,19 @@ class Store:
                     f"(formato {found}, esta versao entende {SCHEMA_VERSION})"
                 )
             cursor.executescript(SCHEMA)
+            self._migrate(cursor, found)
             # No parameter binding in a PRAGMA, so the value is an int constant
             # from this module and never anything a caller supplied.
             cursor.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._connection.commit()
+
+    @staticmethod
+    def _migrate(cursor: sqlite3.Cursor, found: int) -> None:
+        """Bring an older file up to date. CREATE TABLE IF NOT EXISTS covers new ones."""
+        if found and found < VERSION_WITH_FETCH_TIME:
+            columns = {row["name"] for row in cursor.execute("PRAGMA table_info(cached_draw)")}
+            if "fetched_at" not in columns:
+                cursor.execute("ALTER TABLE cached_draw ADD COLUMN fetched_at TEXT")
 
     def close(self) -> None:
         self._connection.close()
@@ -145,15 +170,19 @@ class Store:
 
     # --- the result cache ------------------------------------------------------
 
-    def remember(self, draw: Draw) -> None:
-        """Cache a draw, replacing an incomplete copy of the same contest."""
+    def remember(self, draw: Draw, fetched_at: datetime | None = None) -> None:
+        """Cache a draw, replacing an incomplete copy of the same contest.
+
+        The fetch time is what lets the app say "showing saved results from
+        dd/mm/yyyy hh:mm" instead of implying the numbers are current.
+        """
         with self._connection as connection:
             connection.execute(
                 """
                 INSERT INTO cached_draw
                     (game, contest, drawn_on, numbers, second_numbers, extra, clovers,
-                     prizes, source, complete)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     prizes, source, complete, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (game, contest) DO UPDATE SET
                     drawn_on       = excluded.drawn_on,
                     numbers        = excluded.numbers,
@@ -162,7 +191,8 @@ class Store:
                     clovers        = excluded.clovers,
                     prizes         = excluded.prizes,
                     source         = excluded.source,
-                    complete       = excluded.complete
+                    complete       = excluded.complete,
+                    fetched_at     = excluded.fetched_at
                 """,
                 (
                     draw.game,
@@ -175,6 +205,7 @@ class Store:
                     encode_prizes(draw.prizes),
                     str(draw.source),
                     int(draw.prize_table_published),
+                    (fetched_at or datetime.now(UTC)).isoformat(),
                 ),
             )
 
@@ -193,6 +224,32 @@ class Store:
             (game,),
         ).fetchall()
         return tuple(int(row["contest"]) for row in rows)
+
+    def fetched_at(self, game: str, contest: int) -> datetime | None:
+        """When one cached contest was downloaded, or None if that is not recorded."""
+        row = self._connection.execute(
+            "SELECT fetched_at FROM cached_draw WHERE game = ? AND contest = ?",
+            (game, contest),
+        ).fetchone()
+        if row is None or row["fetched_at"] is None:
+            return None
+        return datetime.fromisoformat(str(row["fetched_at"]))
+
+    def last_updated(self, game: str | None = None) -> datetime | None:
+        """The most recent download, for a game or across all of them.
+
+        This is what the offline notice reads. None means nothing has been
+        downloaded yet, which is a different sentence from an old timestamp.
+        """
+        if game is None:
+            row = self._connection.execute(
+                "SELECT MAX(fetched_at) AS newest FROM cached_draw"
+            ).fetchone()
+        else:
+            row = self._connection.execute(
+                "SELECT MAX(fetched_at) AS newest FROM cached_draw WHERE game = ?", (game,)
+            ).fetchone()
+        return None if row["newest"] is None else datetime.fromisoformat(str(row["newest"]))
 
     def latest_cached(self, game: str) -> int | None:
         """The newest contest held for a game, which is the offline horizon."""
@@ -217,6 +274,29 @@ class Store:
             extra=None if row["extra"] is None else str(row["extra"]),
             clovers=tuple(json.loads(row["clovers"])),
         )
+
+    # --- settings ----------------------------------------------------------------
+
+    def setting(self, key: str, default: str = "") -> str:
+        """One stored preference, or the default when it was never set."""
+        row = self._connection.execute("SELECT value FROM setting WHERE key = ?", (key,)).fetchone()
+        return default if row is None else str(row["value"])
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._connection as connection:
+            connection.execute(
+                "INSERT INTO setting (key, value) VALUES (?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
+    def flag(self, key: str, *, default: bool = False) -> bool:
+        """A yes/no preference. Anything unrecognised reads as the default."""
+        stored = self.setting(key, YES if default else NO)
+        return stored == YES
+
+    def set_flag(self, key: str, value: bool) -> None:
+        self.set_setting(key, YES if value else NO)
 
     # --- saved bets ------------------------------------------------------------
 
