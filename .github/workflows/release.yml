@@ -1,17 +1,25 @@
 # Release build: one runner per OS and architecture -- PyInstaller cannot
-# cross-compile -- each uploading its artifact and its SHA-256 to a DRAFT
-# GitHub Release. The owner reviews the draft and publishes it by hand.
+# cross-compile -- and **nothing is published until every one of them passes**.
 #
-# Builds are unsigned by decision, so the checksums are the integrity signal.
-# macOS bundles are ad-hoc signed and the signature verified in the build script;
-# an unsigned bundle makes macOS call the app "damaged" with no Open Anyway.
+# That ordering is the point of this file. The builds upload their artifacts to
+# the workflow, not to a release; the release is created at the end, only if all
+# four jobs succeeded. A half-published release with one broken installer is
+# worse than no release, because people download it.
 #
-# Every job runs the frozen binary with `--probe` before packaging it. Verifying
-# HTTPS inside the frozen app is a release blocker (PLAN.md section 10): a build
-# that cannot reach Caixa is not shipped, whatever else passed.
+# What each runner proves before it hands its artifact over:
 #
-# Only `checkout` and `setup-python` are used, both pinned by commit SHA; the
-# artifacts move through the `gh` CLI rather than a third-party action.
+#   * the packaged app answers `--probe`, which is HTTPS working *inside the
+#     frozen build* -- the release blocker from PLAN.md section 10;
+#   * on macOS, `codesign --verify --deep --strict` passes, because a broken
+#     signature makes macOS call the app "damaged" with no way past it;
+#   * on Linux, the AppImage itself starts, not just the directory it wraps.
+#
+# One thing CI cannot settle: Gatekeeper's first launch. Quarantine is applied
+# by the browser that downloads a file, so a build made on the runner is never
+# quarantined and never sees the dialog. It is tested by hand on a real Mac.
+#
+# Builds are unsigned by decision, so the SHA-256 files published alongside are
+# the integrity signal. Every action is pinned to a commit SHA.
 
 name: Release
 
@@ -21,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build (e.g. v0.1.0)"
+        description: "Existing tag to build (e.g. v0.1.0-rc.1)"
         required: true
 
 permissions:
@@ -31,11 +39,12 @@ env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
-  draft:
-    name: Create the draft release
+  check:
+    name: Check the tag
     runs-on: ubuntu-latest
-    permissions:
-      contents: write # creating the draft release is the only write this needs
+    outputs:
+      prerelease: ${{ steps.kind.outputs.prerelease }}
+      version: ${{ steps.kind.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -43,51 +52,59 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+      - name: Install (pinned)
+        run: python -m pip install packaging -c constraints.txt
 
       # The version has one home. A tag that disagrees with it would ship a
       # binary whose About box contradicts its own download page.
-      - name: Check the tag matches __version__
+      - name: The tag must match __version__
+        id: kind
         shell: bash
         run: |
-          declared=$(python -c "import re,pathlib; \
-            print(re.search(r'__version__ = \"([^\"]+)\"', \
-            pathlib.Path('src/lotoconfere/__init__.py').read_text()).group(1))")
-          if [ "v${declared}" != "${TAG}" ]; then
-            echo "tag ${TAG} does not match __version__ ${declared}" >&2
-            exit 1
-          fi
+          python - "$TAG" <<'PY'
+          import os, pathlib, re, sys
+          from packaging.version import Version
 
-      - name: Create the draft if it does not exist
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          if ! gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release create "${TAG}" --draft --title "${TAG}" \
-              --notes "Rascunho. Instaladores e checksums SHA-256 abaixo."
-          fi
+          tag = sys.argv[1]
+          source = pathlib.Path("src/lotoconfere/__init__.py").read_text(encoding="utf-8")
+          match = re.search(r'__version__ = "([^"]+)"', source)
+          if match is None:
+              sys.exit("could not find __version__")
+          declared = Version(match.group(1))
+          # SemVer writes 0.1.0-rc.1 and PEP 440 writes 0.1.0rc1. Comparing the
+          # parsed versions rather than the strings lets the tag stay SemVer and
+          # the package stay PEP 440 without either one lying.
+          if Version(tag.removeprefix("v")) != declared:
+              sys.exit(f"tag {tag} does not match __version__ {declared}")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"prerelease={'true' if declared.is_prerelease else 'false'}\n")
+              out.write(f"version={declared}\n")
+          print(f"{tag} matches __version__ {declared}; prerelease={declared.is_prerelease}")
+          PY
 
   build:
     name: ${{ matrix.label }}
-    needs: draft
+    needs: check
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write # uploading this job's artifact to the draft release
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: windows-latest
             label: Windows x64
+            artifact: windows-x64
           - os: macos-15
             label: macOS Apple Silicon
             arch: arm64
+            artifact: macos-arm64
           - os: macos-15-intel
             label: macOS Intel
             arch: x86_64
+            artifact: macos-x86_64
           - os: ubuntu-latest
             label: Linux x86_64
             arch: x86_64
+            artifact: linux-x86_64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -109,15 +126,8 @@ jobs:
       - name: Freeze the app
         run: python -m PyInstaller packaging/lotoconfere.spec --noconfirm
 
-      # Windows: the probe is run here because the .iss step packages whatever is
-      # in dist/. The other two run it inside their build scripts.
-      - name: Verify HTTPS inside the frozen app (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: ./dist/LotoConfere/LotoConfere.exe --probe
+      # --- Windows ------------------------------------------------------------
 
-      # PowerShell, not bash: Git Bash on Windows rewrites a leading /FLAG into a
-      # path, which turns every Inno Setup switch into a filename it rejects.
       - name: Build Setup.exe
         if: runner.os == 'Windows'
         shell: pwsh
@@ -146,9 +156,47 @@ jobs:
           & (Join-Path $dir "ISCC.exe") "/DAppVersion=$($env:TAG -replace '^v','')" packaging\lotoconfere.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
 
+      # Installing it and probing what was installed tests the artifact people
+      # actually download, not the directory it was built from.
+      - name: Install it and check HTTPS from the installed copy
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\*Setup.exe | Select-Object -First 1
+          $target = Join-Path $env:RUNNER_TEMP "installed"
+          & $setup.FullName /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOICONS "/DIR=$target" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "the installer failed: $LASTEXITCODE" }
+
+          $app = Join-Path $target "LotoConfere.exe"
+          if (-not (Test-Path $app)) { throw "the installer produced no LotoConfere.exe" }
+          $out = Join-Path $env:RUNNER_TEMP "probe.txt"
+          $probe = Start-Process -FilePath $app -ArgumentList "--probe" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $out
+          Get-Content $out
+          if ($probe.ExitCode -ne 0) { throw "HTTPS from the installed app failed: $($probe.ExitCode)" }
+
+      # --- macOS --------------------------------------------------------------
+
+      # Signs ad-hoc, verifies the signature, probes the bundle, builds the .dmg.
       - name: Build the .dmg
         if: runner.os == 'macOS'
         run: bash packaging/build_dmg.sh "${TAG#v}" "${{ matrix.arch }}"
+
+      - name: Check the signature and HTTPS from inside the .dmg
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          dmg=$(ls dist/*.dmg | head -1)
+          mount=$(mktemp -d)
+          hdiutil attach "$dmg" -mountpoint "$mount" -nobrowse -quiet
+          trap 'hdiutil detach "$mount" -quiet || true' EXIT
+
+          app="$mount/LotoConfere.app"
+          # The signature has to survive the trip through the disk image, not
+          # just exist on the bundle that went into it.
+          codesign --verify --deep --strict --verbose=2 "$app"
+          "$app/Contents/MacOS/LotoConfere" --probe
+
+      # --- Linux --------------------------------------------------------------
 
       - name: Build the .AppImage
         if: runner.os == 'Linux'
@@ -156,20 +204,104 @@ jobs:
           set -a; . packaging/tool-pins.env; set +a
           bash packaging/build_appimage.sh "${TAG#v}" "${{ matrix.arch }}"
 
-      # Unsigned builds make the checksum the integrity signal, so it ships with
-      # the artifact rather than in a wiki page nobody opens.
-      - name: Checksum and upload
+      - name: Check HTTPS from inside the .AppImage
+        if: runner.os == 'Linux'
         env:
-          GH_TOKEN: ${{ github.token }}
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          image=$(ls dist/*.AppImage | head -1)
+          chmod +x "$image"
+          # A runner without FUSE cannot mount an AppImage; extracting it and
+          # running from the extraction is the documented way round that.
+          if ! "$image" --probe; then
+            echo "direct run failed, retrying with --appimage-extract-and-run"
+            APPIMAGE_EXTRACT_AND_RUN=1 "$image" --probe
+          fi
+
+      # --- hand it over --------------------------------------------------------
+
+      - name: Checksum
         shell: bash
         run: |
           shopt -s nullglob
           cd dist
-          for file in *.exe *.dmg *.AppImage; do
+          for file in *Setup.exe *.dmg *.AppImage; do
             if command -v sha256sum >/dev/null; then
               sha256sum "${file}" > "${file}.sha256"
             else
               shasum -a 256 "${file}" > "${file}.sha256"
             fi
-            gh release upload "${TAG}" "${file}" "${file}.sha256" --clobber
           done
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*Setup.exe
+            dist/*.dmg
+            dist/*.AppImage
+            dist/*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # the only write in this workflow, and only after every check passed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write the release notes
+        shell: bash
+        run: |
+          {
+            if [ "${{ needs.check.outputs.prerelease }}" = "true" ]; then
+              echo "Versão de teste (${TAG}). Use para experimentar e relatar problemas."
+              echo
+              echo "**O primeiro acesso no macOS ainda não foi testado.** O aviso do Gatekeeper"
+              echo "só aparece em um arquivo realmente baixado, e a verificação automática não"
+              echo "consegue reproduzir isso. No Windows e no Linux o primeiro acesso está"
+              echo "descrito no README."
+            else
+              echo "Versão ${TAG}."
+            fi
+            echo
+            echo "## Instalação"
+            echo
+            echo "Baixe o arquivo do seu sistema. O passo a passo de cada um, e o aviso que cada"
+            echo "sistema mostra na primeira vez, estão no [README](https://github.com/mtiengo/lotoconfere#instalação)."
+            echo
+            echo "Os instaladores não são assinados, por decisão do projeto. Por isso cada arquivo"
+            echo "vem com um \`.sha256\` ao lado: compare com o resultado do comando que está no"
+            echo "README para conferir que o download veio inteiro."
+            echo
+            echo "## O que foi verificado nesta build"
+            echo
+            echo "- O aplicativo empacotado conecta no site da Caixa por HTTPS, nos quatro arquivos."
+            echo "- As duas versões de macOS passam em \`codesign --verify --deep --strict\`."
+            echo "- O AppImage abre e conecta."
+          } > notes.md
+          cat notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flag=""
+          if [ "${{ needs.check.outputs.prerelease }}" = "true" ]; then
+            flag="--prerelease"
+          fi
+          gh release create "${TAG}" $flag \
+            --title "${TAG}" \
+            --notes-file notes.md \
+            artifacts/*
