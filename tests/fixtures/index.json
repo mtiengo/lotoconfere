@@ -1,0 +1,122 @@
+{
+  "caixa_diadesorte_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "4f5fcf71216484ca011d839c0f60059dd021a9e44fb04691ed1bfde46bba92fa",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/diadesorte/"
+  },
+  "caixa_duplasena_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "d434af42403411fa51a542e87cfb5169179c0b6bb7d4e9085e561e81378dde33",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/duplasena/"
+  },
+  "caixa_lotofacil_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "0f54b1c8ee34ab762100e5ffe3f5c30dc6dfc9cef4b1fd6099dc084b7a438dfc",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotofacil/"
+  },
+  "caixa_lotomania_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "ed17d8a2fe8c7e6e5d96dd242c9b5f6c384f36aa0ce6aea37a98cec2a44e2dcb",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/lotomania/"
+  },
+  "caixa_maismilionaria_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "8dd202a4175ffee5b63c12afc83240a320207c587a8a11b486d698ecb20a4404",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/maismilionaria/"
+  },
+  "caixa_megasena_3062.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "0f4ef7f2067975793e94bc717234b58cc7d7b62955e6a2fc45a437fb56fe00d1",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/megasena/3062"
+  },
+  "caixa_megasena_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "0f4ef7f2067975793e94bc717234b58cc7d7b62955e6a2fc45a437fb56fe00d1",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/megasena/"
+  },
+  "caixa_quina_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "802ebbd27ec47c5e0bf4bd028b02b5e8ec9aa8900c9476c54a7a70830bf1330e",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/quina/"
+  },
+  "caixa_supersete_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "83c592d21660b5783abd14fbdeeb008d7e38ec402175c6fd461446d6488c232b",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/supersete/"
+  },
+  "caixa_timemania_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "efd9ddd5425083b35c8712cb1cc9d8994f3e350fc5c3a370a0a8c79f60c11bb1",
+    "source": "caixa",
+    "url": "https://servicebus2.caixa.gov.br/portaldeloterias/api/timemania/"
+  },
+  "mirror_diadesorte_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "184efa5fa4bfb5d50f70037fda19c3001043511ed27dc94b073e6e89b80bd45e",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/diadesorte/latest"
+  },
+  "mirror_duplasena_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "a794b5ec9c1f65e59550b765798bb7f4e2b7cf8d766f9605fbf8898857b370c8",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/duplasena/latest"
+  },
+  "mirror_lotofacil_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "e92c756fafe55e4416e5bcc314fecca839fd93f2858571689b74353aa0ff2f00",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/lotofacil/latest"
+  },
+  "mirror_lotomania_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "1597a01b860a06fc53991bab8f5b6b29670a7fcdf81871159c53b2bc2e581449",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/lotomania/latest"
+  },
+  "mirror_maismilionaria_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "19009faefa40bb582a3a1a01b9574910e022a98a9194ad87d78b7ee09bd24868",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/maismilionaria/latest"
+  },
+  "mirror_megasena_3062.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "bcb44631d81539d092ea0e643fd5b8afd300ca056d8c15abf695eb9e88e585a8",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/megasena/3062"
+  },
+  "mirror_megasena_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "bcb44631d81539d092ea0e643fd5b8afd300ca056d8c15abf695eb9e88e585a8",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/megasena/latest"
+  },
+  "mirror_quina_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "59b608b13012b544cae1efedad66b80dfbf508319b92918670538bca9029fe76",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/quina/latest"
+  },
+  "mirror_supersete_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "6ddf6be235febc124b5d0164aacf6d8c9d7ba4eb5c76dec0e12189b964b19641",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/supersete/latest"
+  },
+  "mirror_timemania_latest.json": {
+    "fetched_on": "2026-09-26",
+    "sha256": "10bd974bbd5885fc080e89257320de10263684d426d112847fcbaa22cf4d67ac",
+    "source": "mirror",
+    "url": "https://loteriascaixa-api.herokuapp.com/api/timemania/latest"
+  }
+}
