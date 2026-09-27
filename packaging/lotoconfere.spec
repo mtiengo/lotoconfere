@@ -28,6 +28,9 @@ a = Analysis(  # noqa: F821
     datas=[
         (str(PROJECT_ROOT / "src" / "lotoconfere" / "gui" / "fonts"), "lotoconfere/gui/fonts"),
         (str(PROJECT_ROOT / "src" / "lotoconfere" / "gui" / "icons"), "lotoconfere/gui/icons"),
+        # Qt is used under the LGPL, which asks that the licence ship with the
+        # program. Nothing else puts it in the build.
+        (str(PROJECT_ROOT / "src" / "lotoconfere" / "licenses"), "lotoconfere/licenses"),
     ],
     hiddenimports=[],
     hookspath=[],
