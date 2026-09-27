@@ -7,8 +7,6 @@ uma teimosinha, com o resultado de cada concurso separado.
 > lidos do portal de loterias da Caixa, mas a conferência aqui é apenas informativa. Confirme
 > sempre nos canais oficiais da Caixa antes de considerar qualquer aposta premiada.
 
-> **[falta captura de tela: janela principal do LotoConfere, com uma aposta conferida]**
-
 ## O que ele faz
 
 - Confere uma aposta contra um concurso.
@@ -50,8 +48,6 @@ esperar em cada um.
 3. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 4. Siga o instalador.
 
-> **[falta captura de tela: aviso do SmartScreen, com o link "Mais informações" destacado]**
-
 Sobre esse aviso, na documentação da Microsoft: [Proteger-se contra aplicativos potencialmente
 indesejados](https://support.microsoft.com/pt-br/windows/proteger-se-contra-aplicativos-potencialmente-indesejados-c7668a25-174e-3b78-0191-faf0607f7a6e).
 
@@ -68,11 +64,6 @@ indesejados](https://support.microsoft.com/pt-br/windows/proteger-se-contra-apli
 
 Clicar com o botão direito e escolher Abrir **não funciona mais** a partir do macOS 15. O caminho
 é o dos Ajustes do Sistema.
-
-> **[falta captura de tela: Ajustes do Sistema, Privacidade e Segurança, botão "Abrir mesmo
-> assim"]**
->
-> **[falta link: página de ajuda da Apple sobre abrir apps de desenvolvedores não identificados]**
 
 ### Linux
 
