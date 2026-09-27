@@ -1,0 +1,175 @@
+# Release build: one runner per OS and architecture -- PyInstaller cannot
+# cross-compile -- each uploading its artifact and its SHA-256 to a DRAFT
+# GitHub Release. The owner reviews the draft and publishes it by hand.
+#
+# Builds are unsigned by decision, so the checksums are the integrity signal.
+# macOS bundles are ad-hoc signed and the signature verified in the build script;
+# an unsigned bundle makes macOS call the app "damaged" with no Open Anyway.
+#
+# Every job runs the frozen binary with `--probe` before packaging it. Verifying
+# HTTPS inside the frozen app is a release blocker (PLAN.md section 10): a build
+# that cannot reach Caixa is not shipped, whatever else passed.
+#
+# Only `checkout` and `setup-python` are used, both pinned by commit SHA; the
+# artifacts move through the `gh` CLI rather than a third-party action.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  draft:
+    name: Create the draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creating the draft release is the only write this needs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # The version has one home. A tag that disagrees with it would ship a
+      # binary whose About box contradicts its own download page.
+      - name: Check the tag matches __version__
+        shell: bash
+        run: |
+          declared=$(python -c "import re,pathlib; \
+            print(re.search(r'__version__ = \"([^\"]+)\"', \
+            pathlib.Path('src/lotoconfere/__init__.py').read_text()).group(1))")
+          if [ "v${declared}" != "${TAG}" ]; then
+            echo "tag ${TAG} does not match __version__ ${declared}" >&2
+            exit 1
+          fi
+
+      - name: Create the draft if it does not exist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" --draft --title "${TAG}" \
+              --notes "Rascunho. Instaladores e checksums SHA-256 abaixo."
+          fi
+
+  build:
+    name: ${{ matrix.label }}
+    needs: draft
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write # uploading this job's artifact to the draft release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+          - os: macos-15
+            label: macOS Apple Silicon
+            arch: arm64
+          - os: macos-15-intel
+            label: macOS Intel
+            arch: x86_64
+          - os: ubuntu-latest
+            label: Linux x86_64
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libopengl0 libxkbcommon0 libfontconfig1 libdbus-1-3 libglib2.0-0t64
+
+      - name: Install (pinned)
+        run: python -m pip install -e ".[build]" -c constraints.txt
+
+      - name: Freeze the app
+        run: python -m PyInstaller packaging/lotoconfere.spec --noconfirm
+
+      # Windows: the probe is run here because the .iss step packages whatever is
+      # in dist/. The other two run it inside their build scripts.
+      - name: Verify HTTPS inside the frozen app (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: ./dist/LotoConfere/LotoConfere.exe --probe
+
+      # PowerShell, not bash: Git Bash on Windows rewrites a leading /FLAG into a
+      # path, which turns every Inno Setup switch into a filename it rejects.
+      - name: Build Setup.exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pins = @{}
+          foreach ($line in Get-Content packaging/tool-pins.env) {
+            if ($line -match '^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$') { $pins[$Matches[1]] = $Matches[2] }
+          }
+          $url = $pins['INNOSETUP_URL']
+          $want = $pins['INNOSETUP_SHA256']
+          if (-not $url -or -not $want) { throw "Inno Setup pin missing from packaging/tool-pins.env" }
+
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          $got = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $want) { throw "Inno Setup SHA-256 mismatch: $got" }
+
+          # The compiler is extracted, not installed, so the build uses the pinned
+          # version rather than whatever the runner image happens to ship.
+          # /CURRENTUSER matters: without it the installer asks for elevation, and a
+          # UAC prompt nobody can answer is auto-denied and exits 2.
+          $dir = Join-Path $env:RUNNER_TEMP "innosetup"
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /CURRENTUSER /PORTABLE=1 "/DIR=$dir" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup extraction failed: $LASTEXITCODE" }
+
+          & (Join-Path $dir "ISCC.exe") "/DAppVersion=$($env:TAG -replace '^v','')" packaging\lotoconfere.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - name: Build the .dmg
+        if: runner.os == 'macOS'
+        run: bash packaging/build_dmg.sh "${TAG#v}" "${{ matrix.arch }}"
+
+      - name: Build the .AppImage
+        if: runner.os == 'Linux'
+        run: |
+          set -a; . packaging/tool-pins.env; set +a
+          bash packaging/build_appimage.sh "${TAG#v}" "${{ matrix.arch }}"
+
+      # Unsigned builds make the checksum the integrity signal, so it ships with
+      # the artifact rather than in a wiki page nobody opens.
+      - name: Checksum and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          cd dist
+          for file in *.exe *.dmg *.AppImage; do
+            if command -v sha256sum >/dev/null; then
+              sha256sum "${file}" > "${file}.sha256"
+            else
+              shasum -a 256 "${file}" > "${file}.sha256"
+            fi
+            gh release upload "${TAG}" "${file}" "${file}.sha256" --clobber
+          done
