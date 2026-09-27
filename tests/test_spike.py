@@ -161,3 +161,15 @@ def test_the_window_icon_ships_with_the_package():
     # blank taskbar icon nobody notices until release day.
     assert spike.ICON.is_file()
     assert spike.ICON.parent.name == "icons"
+
+
+def test_the_worker_emits_whatever_the_probe_returned(qtbot):
+    # Called directly rather than through the QThread: coverage does not see a
+    # Qt-created thread on every Python version, and a line that is covered on
+    # 3.14 but not on 3.12 fails the gate for a reason unrelated to the code.
+    expected = spike.ProbeResult(True, "ok", "detalhe")
+    worker = spike.ProbeWorker(lambda: expected)
+    seen: list[spike.ProbeResult] = []
+    worker.finished.connect(seen.append)
+    worker.run()
+    assert seen == [expected]
