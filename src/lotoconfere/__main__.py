@@ -14,6 +14,10 @@ PROBE_FLAG = "--probe"
 
 def report_probe() -> int:
     """Run the connection check with no GUI; 0 if the call succeeded, 1 if not."""
+    # The report is Portuguese and the Windows console is not UTF-8 by default,
+    # which turns every accent into mojibake in a CI log.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     result = probe_caixa()
     for line in (*environment_lines(), result.summary, result.detail):
         print(line)
