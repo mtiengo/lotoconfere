@@ -5,7 +5,7 @@ from importlib.metadata import version
 
 import lotoconfere
 from lotoconfere import __main__
-from lotoconfere.gui.spike import ProbeResult
+from lotoconfere.probe import ProbeResult
 
 
 def test_version_matches_the_installed_distribution():

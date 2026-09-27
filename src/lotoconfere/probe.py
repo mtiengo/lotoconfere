@@ -1,32 +1,20 @@
-"""Throwaway diagnostic window for the packaging spike (PLAN.md step 2).
+"""The connection self-check behind `--probe`.
 
-It exists to surface Qt, PyInstaller, certificate and Gatekeeper problems on all
-three operating systems before any real code depends on them, so it reports what
-a frozen build gets wrong: whether Qt starts, whether a CA store is visible, and
-whether one HTTPS call to Caixa completes.
+Its job is to answer one question about a **packaged** build: can this binary, on
+this machine, complete an HTTPS request to Caixa? A frozen app can lose its CA
+bundle, and Caixa's certificate chain has broken before, so the release workflow
+runs this on every operating system and refuses to ship a build that fails it.
 
-This is the one widget that talks to the network directly. There is no `source/`
-yet, and there is no point building one before the frozen app is known to reach
-the endpoint at all. Step 8 deletes this module; nothing else may copy its shape.
+No Qt here. Importing the app already proves the Qt libraries load; this proves
+the network does.
 """
 
 import platform
 import ssl
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import httpx
-from PySide6.QtCore import QObject, Qt, QThread, Signal
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (
-    QApplication,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
 
 from lotoconfere import __version__
 
@@ -40,10 +28,6 @@ TIMEOUT_SECONDS = 20.0
 # never ends cannot fill memory: the body is read in chunks and abandoned the
 # moment it crosses this, rather than loaded whole and measured afterwards.
 MAX_RESPONSE_BYTES = 1_000_000
-
-# Package data, collected into the frozen build under this same relative path,
-# so one expression finds it whether the app was installed or run from source.
-ICON = Path(__file__).parent / "icons" / "lotoconfere.png"
 
 
 @dataclass(frozen=True)
@@ -67,7 +51,7 @@ def trusted_ca_count() -> int:
 
 def environment_lines() -> list[str]:
     """The facts worth knowing when a packaged build misbehaves."""
-    frozen = "sim" if getattr(sys, "frozen", False) else "nao"
+    frozen = "sim" if getattr(sys, "frozen", False) else "não"
     return [
         f"Versao: {__version__}",
         f"Empacotado: {frozen}",
@@ -120,19 +104,19 @@ def probe_caixa() -> ProbeResult:
     except httpx.TimeoutException:
         return ProbeResult(
             ok=False,
-            summary="A Caixa nao respondeu a tempo.",
+            summary="A Caixa não respondeu a tempo.",
             detail=f"Tempo limite de {TIMEOUT_SECONDS:.0f} segundos.",
         )
     except httpx.HTTPError as error:
         if is_certificate_failure(error):
             return ProbeResult(
                 ok=False,
-                summary="Nao foi possivel verificar a conexao segura com a Caixa.",
+                summary="Nao foi possível verificar a conexao segura com a Caixa.",
                 detail=f"Falha de certificado: {error}",
             )
         return ProbeResult(
             ok=False,
-            summary="Nao foi possivel conectar ao site da Caixa.",
+            summary="Nao foi possível conectar ao site da Caixa.",
             detail=f"{type(error).__name__}: {error}",
         )
 
@@ -140,7 +124,7 @@ def probe_caixa() -> ProbeResult:
         return ProbeResult(
             ok=False,
             summary="A Caixa respondeu, mas com um erro.",
-            detail=f"Codigo HTTP {status}.",
+            detail=f"Código HTTP {status}.",
         )
     if size is None:
         return ProbeResult(
@@ -151,76 +135,5 @@ def probe_caixa() -> ProbeResult:
     return ProbeResult(
         ok=True,
         summary="Conexao HTTPS com a Caixa: OK.",
-        detail=f"Resposta de {size} bytes, codigo HTTP {status}.",
+        detail=f"Resposta de {size} bytes, código HTTP {status}.",
     )
-
-
-class ProbeWorker(QObject):
-    """Runs one probe on a worker thread so the window never freezes."""
-
-    finished = Signal(ProbeResult)
-
-    def __init__(self, probe: Callable[[], ProbeResult]) -> None:
-        super().__init__()
-        self._probe = probe
-
-    def run(self) -> None:
-        self.finished.emit(self._probe())
-
-
-class SpikeWindow(QWidget):
-    """A button, a result line, and the environment facts behind them."""
-
-    def __init__(self, probe: Callable[[], ProbeResult] = probe_caixa) -> None:
-        super().__init__()
-        self._probe = probe
-        self._thread: QThread | None = None
-
-        self.setWindowTitle("LotoConfere - teste de empacotamento")
-
-        self._environment = QLabel("\n".join(environment_lines()))
-        self._environment.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        self._button = QPushButton("Testar conexao com a Caixa")
-        self._button.clicked.connect(self.start_probe)
-
-        self._status = QLabel("Nenhum teste executado ainda.")
-        self._status.setWordWrap(True)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._environment)
-        layout.addWidget(self._button)
-        layout.addWidget(self._status)
-
-    def start_probe(self) -> None:
-        """Run the probe off the UI thread and report when it lands."""
-        self._button.setEnabled(False)
-        self._status.setText("Consultando a Caixa...")
-
-        thread = QThread(self)
-        worker = ProbeWorker(self._probe)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self.show_result)
-        worker.finished.connect(thread.quit)
-        # The worker outlives the local name only because the thread owns its
-        # lifetime; without this parent it is collected mid-run.
-        worker.setParent(thread)
-        self._thread = thread
-        thread.start()
-
-    def show_result(self, result: ProbeResult) -> None:
-        """Put the probe's verdict on screen."""
-        self._status.setText(f"{result.summary}\n{result.detail}")
-        self._button.setEnabled(True)
-
-
-def run() -> int:
-    """Open the spike window and return a process exit code."""
-    app = QApplication.instance() or QApplication(sys.argv)
-    # The taskbar, the title bar, the alt-tab list and the macOS dock all read this.
-    QApplication.setWindowIcon(QIcon(str(ICON)))
-    window = SpikeWindow()
-    window.resize(480, 260)
-    window.show()
-    return app.exec()

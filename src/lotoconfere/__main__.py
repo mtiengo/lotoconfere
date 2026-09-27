@@ -2,7 +2,8 @@
 
 import sys
 
-from lotoconfere.gui.spike import environment_lines, probe_caixa, run
+from lotoconfere.gui.app import run
+from lotoconfere.probe import environment_lines, probe_caixa
 
 # Not a CLI, and not a step toward one: verifying HTTPS *inside the frozen app*
 # is a release blocker (PLAN.md section 10), and a blocker CI cannot run is not a

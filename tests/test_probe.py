@@ -1,8 +1,7 @@
-"""The packaging spike: its probe classifies outcomes, and its window stays alive.
+"""The connection self-check: what it says when the call does not work.
 
-The spike is throwaway (PLAN.md step 2), but the thing it proves is not: a frozen
-build that cannot verify a certificate must say so in those words, because that is
-the failure this endpoint has actually produced.
+A frozen build that cannot verify a certificate must say so in those words,
+because that is a failure this endpoint has actually produced.
 """
 
 import ssl
@@ -10,10 +9,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import httpx
-import pytest
 
 from lotoconfere import __version__
-from lotoconfere.gui import spike
+from lotoconfere import probe as spike
 
 
 @dataclass
@@ -97,34 +95,6 @@ def test_the_environment_report_names_the_version():
     assert any(__version__ in line for line in spike.environment_lines())
 
 
-def test_the_window_reports_a_probe_that_succeeded(qtbot):
-    ok = spike.ProbeResult(ok=True, summary="Conexao HTTPS com a Caixa: OK.", detail="tudo certo")
-    window = spike.SpikeWindow(probe=lambda: ok)
-    qtbot.addWidget(window)
-
-    window.start_probe()
-    qtbot.waitUntil(lambda: "tudo certo" in window._status.text(), timeout=5000)
-    assert window._button.isEnabled()
-
-
-def test_the_window_reports_a_probe_that_failed(qtbot):
-    bad = spike.ProbeResult(ok=False, summary="Nao foi possivel conectar", detail="sem rede")
-    window = spike.SpikeWindow(probe=lambda: bad)
-    qtbot.addWidget(window)
-
-    window.start_probe()
-    qtbot.waitUntil(lambda: "sem rede" in window._status.text(), timeout=5000)
-
-
-def test_run_opens_a_window_without_blocking(qtbot, monkeypatch):
-    from PySide6.QtWidgets import QApplication
-
-    monkeypatch.setattr(QApplication, "exec", lambda self: 0)
-    monkeypatch.setattr(spike, "probe_caixa", lambda: spike.ProbeResult(True, "ok", ""))
-    assert spike.run() == 0
-
-
-@pytest.mark.live
 def test_the_real_endpoint_still_answers():
     """Drift check: run by hand with `pytest -m live`, never in CI."""
     result = spike.probe_caixa()
@@ -154,22 +124,3 @@ def test_reading_stops_before_consuming_everything(monkeypatch):
     monkeypatch.setattr(httpx, "stream", streaming(response))
     assert spike.probe_caixa().ok is False
     assert read < 15  # the cap is 1 MB, so ~11 chunks, not an unbounded read
-
-
-def test_the_window_icon_ships_with_the_package():
-    # A path that is right in the source tree and wrong in the frozen build is a
-    # blank taskbar icon nobody notices until release day.
-    assert spike.ICON.is_file()
-    assert spike.ICON.parent.name == "icons"
-
-
-def test_the_worker_emits_whatever_the_probe_returned(qtbot):
-    # Called directly rather than through the QThread: coverage does not see a
-    # Qt-created thread on every Python version, and a line that is covered on
-    # 3.14 but not on 3.12 fails the gate for a reason unrelated to the code.
-    expected = spike.ProbeResult(True, "ok", "detalhe")
-    worker = spike.ProbeWorker(lambda: expected)
-    seen: list[spike.ProbeResult] = []
-    worker.finished.connect(seen.append)
-    worker.run()
-    assert seen == [expected]
