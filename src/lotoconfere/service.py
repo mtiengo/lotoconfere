@@ -17,6 +17,7 @@ Pending and unavailable are never counted as zero hits and never quietly fold
 into a summary.
 """
 
+import logging
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -28,7 +29,10 @@ from lotoconfere.core.models import Bet, CheckResult, Draw
 from lotoconfere.core.rules import validate_bet
 from lotoconfere.source.base import ResultsSource
 from lotoconfere.source.caixa import CaixaSource
-from lotoconfere.store.database import Store
+from lotoconfere.source.mirror import MirrorSource
+from lotoconfere.store.database import USE_MIRROR, SavedBet, Store
+
+log = logging.getLogger(__name__)
 
 
 class Outcome(StrEnum):
@@ -102,6 +106,29 @@ class RunSummary:
         return tuple(r for r in self.checked if r.result is not None and r.result.won)
 
 
+@dataclass(frozen=True)
+class SavedBetOutcome:
+    """What one saved bet did when everything was checked at once.
+
+    Exactly one of `single` and `run` is set: a bet with an active teimosinha is
+    checked across its run, and a bet without one against the latest contest.
+    """
+
+    saved: SavedBet
+    single: ContestResult | None = None
+    run: RunSummary | None = None
+
+    @property
+    def results(self) -> tuple[ContestResult, ...]:
+        if self.run is not None:
+            return self.run.results
+        return () if self.single is None else (self.single,)
+
+    @property
+    def winning(self) -> tuple[ContestResult, ...]:
+        return tuple(r for r in self.results if r.result is not None and r.result.won)
+
+
 class Service:
     """What the GUI talks to."""
 
@@ -113,8 +140,11 @@ class Service:
     ) -> None:
         self.store = store
         self.source = source or CaixaSource()
-        # Off unless the caller passes one: the mirror is never consulted by
-        # default, and a result from it is labelled wherever it is shown.
+        # Off unless the caller passes one, or the stored preference asks for it.
+        # The mirror is never consulted by default, and a result from it is
+        # labelled wherever it is shown.
+        if fallback is None and store.flag(USE_MIRROR):
+            fallback = MirrorSource()
         self.fallback = fallback
 
     # --- getting a draw --------------------------------------------------------
@@ -151,9 +181,10 @@ class Service:
         """Caixa first. The mirror only if one was supplied, and only after Caixa fails."""
         try:
             return self.source.contest(game, contest)
-        except SourceError:
+        except SourceError as error:
             if self.fallback is None:
                 raise
+            log.info("%s %s from Caixa failed (%s); trying the mirror", game, contest, error)
             return self.fallback.contest(game, contest)
 
     # --- checking --------------------------------------------------------------
@@ -215,3 +246,36 @@ class Service:
             if cancel is not None and cancel.is_set():
                 return
             yield self.check_one(bet, contest, latest=horizon)
+
+    # --- everything at once ---------------------------------------------------
+
+    def check_all(self, cancel: threading.Event | None = None) -> list[SavedBetOutcome]:
+        """Check every saved bet: its run if it has one, the latest contest if not.
+
+        Cancellable between bets and, for a bet with a run, between contests: a
+        shelf of saved teimosinhas is a lot of requests.
+        """
+        outcomes: list[SavedBetOutcome] = []
+        for saved in self.store.saved_bets():
+            if cancel is not None and cancel.is_set():
+                break
+            outcomes.append(self._check_saved(saved, cancel))
+        return outcomes
+
+    def _check_saved(self, saved: SavedBet, cancel: threading.Event | None) -> SavedBetOutcome:
+        if saved.run_start is not None and saved.run_count is not None:
+            return SavedBetOutcome(
+                saved=saved,
+                run=self.check_run(saved.bet, saved.run_start, saved.run_count, cancel),
+            )
+        latest = self.latest_contest(saved.bet.game)
+        if latest is None:
+            return SavedBetOutcome(
+                saved=saved,
+                single=ContestResult(
+                    contest=0,
+                    outcome=Outcome.UNAVAILABLE,
+                    reason="nenhum resultado disponivel para este jogo ainda",
+                ),
+            )
+        return SavedBetOutcome(saved=saved, single=self.check_one(saved.bet, latest, latest))
