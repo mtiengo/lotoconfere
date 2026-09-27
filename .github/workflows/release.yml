@@ -133,12 +133,12 @@ jobs:
         shell: pwsh
         run: |
           $pins = @{}
-          foreach ($line in Get-Content packaging/tool-pins.env) {
+          foreach ($line in Get-Content packaging/tool-pins.conf) {
             if ($line -match '^\s*([A-Z0-9_]+)\s*=\s*(.+?)\s*$') { $pins[$Matches[1]] = $Matches[2] }
           }
           $url = $pins['INNOSETUP_URL']
           $want = $pins['INNOSETUP_SHA256']
-          if (-not $url -or -not $want) { throw "Inno Setup pin missing from packaging/tool-pins.env" }
+          if (-not $url -or -not $want) { throw "Inno Setup pin missing from packaging/tool-pins.conf" }
 
           $installer = Join-Path $env:RUNNER_TEMP "innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
@@ -201,7 +201,7 @@ jobs:
       - name: Build the .AppImage
         if: runner.os == 'Linux'
         run: |
-          set -a; . packaging/tool-pins.env; set +a
+          set -a; . packaging/tool-pins.conf; set +a
           bash packaging/build_appimage.sh "${TAG#v}" "${{ matrix.arch }}"
 
       - name: Check HTTPS from inside the .AppImage
