@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 import httpx
+import pytest
 
 from lotoconfere import __version__
 from lotoconfere import probe as spike
@@ -95,6 +96,7 @@ def test_the_environment_report_names_the_version():
     assert any(__version__ in line for line in spike.environment_lines())
 
 
+@pytest.mark.live
 def test_the_real_endpoint_still_answers():
     """Drift check: run by hand with `pytest -m live`, never in CI."""
     result = spike.probe_caixa()
