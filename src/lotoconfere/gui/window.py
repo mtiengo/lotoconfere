@@ -1,5 +1,9 @@
 """The window: a lobby of games, and one screen per game.
 
+A game screen holds one or more bets, each on its own volante, because a paper
+ticket usually carries several. They share the contest and the teimosinha, and
+are saved, checked and reported as separate bets.
+
 Thin by design. Every question it asks goes to `service.py`, and every value it
 shows comes back from there; nothing here decides what a bet is worth, whether
 one is legal, or what a contest did. What this module owns is arrangement,
@@ -9,7 +13,7 @@ wording lookups and keeping the network off the UI thread.
 import threading
 from collections.abc import Iterator
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -18,6 +22,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
+    QLayout,
     QLineEdit,
     QMainWindow,
     QMessageBox,
@@ -25,6 +30,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -35,12 +41,12 @@ from lotoconfere.core.errors import LotoConfereError
 from lotoconfere.core.models import Bet
 from lotoconfere.core.rules import GAMES, GameRules, mirror_bet, rules_for, validate_bet
 from lotoconfere.gui import results, strings
-from lotoconfere.gui.pickers import Picker, picker_for
+from lotoconfere.gui.pickers import picker_for
 from lotoconfere.gui.theme import Palette, game_colour
 from lotoconfere.gui.widgets import Dot, label, pane, row, rule
 from lotoconfere.gui.worker import Job
-from lotoconfere.service import ContestResult, Service
-from lotoconfere.store.database import USE_MIRROR, SavedBet
+from lotoconfere.service import BetAnswer, ContestResult, SavedBetOutcome, Service
+from lotoconfere.store.database import USE_MIRROR, SavedBatch
 from lotoconfere.store.transfer import BetFileError, export_bets, import_bets
 
 LOBBY_COLUMNS = 3
@@ -55,6 +61,21 @@ def clear(box: QVBoxLayout) -> None:
         widget = item.widget()
         if widget is not None:
             widget.deleteLater()
+
+
+def check_all_report(outcomes: list[SavedBetOutcome]) -> str:
+    """One line per bet, under its batch's name when the batch holds several."""
+    lines: list[str] = []
+    for outcome in outcomes:
+        state = results.saved_outcome_line(outcome)
+        if len(outcome.saved.bets) == 1:
+            lines.append(f"{outcome.saved.name}: {state}")
+            continue
+        if outcome.position == 0:
+            lines.append(outcome.saved.name)
+        heading = strings.BET_NUMBER.format(number=outcome.position + 1)
+        lines.append(f"    {heading}: {state}")
+    return "\n".join(lines)
 
 
 class Lobby(QWidget):
@@ -106,11 +127,87 @@ class Lobby(QWidget):
         return button
 
     def refresh(self) -> None:
-        self.count.setText(strings.saved_count(len(list(self.service.store.saved_bets()))))
+        total = sum(len(saved.bets) for saved in self.service.store.saved_batches())
+        self.count.setText(strings.saved_count(total))
+
+
+class BetLine(QWidget):
+    """One bet of several: its heading, its own volante, and what it says about itself.
+
+    The line holds widgets and nothing else. Adding, removing and complaining
+    are the screen's business, because only the screen knows the other lines.
+    """
+
+    changed = Signal()
+
+    def __init__(self, rules: GameRules, palette: Palette) -> None:
+        super().__init__()
+        self.rules = rules
+        self.heading = label("", "h2")
+        self.picker = picker_for(rules, palette)
+        self.picker.changed.connect(self._bet_changed)
+        self.status = label("", "muted")
+
+        self.clear_button = QPushButton(strings.CLEAR)
+        self.clear_button.clicked.connect(self.picker.clear)
+        self.mirror = QPushButton(strings.MIRROR_BET)
+        self.mirror.setVisible(rules.has_mirror)
+        # Icons alone are not enough to say what a button does, so both carry
+        # their action in words for screen readers and as a tooltip.
+        self.remove = QPushButton()
+        self.remove.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.remove.setAccessibleName(strings.REMOVE_BET)
+        self.remove.setToolTip(strings.REMOVE_BET)
+        self.add = QPushButton("+")
+        self.add.setAccessibleName(strings.ADD_BET)
+        self.add.setToolTip(strings.ADD_BET)
+
+        frame, box = pane()
+        top = row(self.heading, self.clear_button, self.mirror, spacing=8)
+        top.addWidget(self.remove)
+        top.addWidget(self.add)
+        box.addLayout(top)
+        box.addWidget(self.picker)
+        box.addWidget(self.status)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(frame)
+        self._bet_changed()
+
+    def number(self, position: int) -> None:
+        self.heading.setText(strings.BET_NUMBER.format(number=position + 1))
+
+    def bet(self) -> Bet:
+        return self.picker.bet()
+
+    def playable(self) -> bool:
+        try:
+            validate_bet(self.bet())
+        except LotoConfereError:
+            return False
+        return True
+
+    def _bet_changed(self) -> None:
+        bet = self.bet()
+        try:
+            validate_bet(bet)
+        except LotoConfereError as error:
+            # An empty picker is a volante nobody has touched yet, not a mistake.
+            # Greeting someone with a validation error is a poor way to start.
+            self.status.setText(
+                strings.CHOSEN_COUNT.format(chosen=bet.size, needed=self.rules.minimum_bet_size)
+                if bet.size == 0
+                else str(error)
+            )
+        else:
+            self.status.setText(
+                strings.CHOSEN_COUNT.format(chosen=bet.size, needed=self.rules.minimum_bet_size)
+            )
+        self.changed.emit()
 
 
 class GameScreen(QWidget):
-    """One game: pick numbers, choose a contest, read what happened."""
+    """One game: fill in one or more bets, choose a contest, read what happened."""
 
     def __init__(self, rules: GameRules, palette: Palette, service: Service) -> None:
         super().__init__()
@@ -118,13 +215,14 @@ class GameScreen(QWidget):
         self.palette_tokens = palette
         self.service = service
         self.job: Job | None = None
+        self.lines: list[BetLine] = []
 
         self._build_controls()
         self._build_layout()
         self.reload_saved()
-        self._bet_changed()
+        self._set_line_count(1)
         # Focus starts where the work starts, not on the way out.
-        self.picker.setFocus()
+        self.lines[0].picker.setFocus()
 
     def _build_controls(self) -> None:
         """Every widget on the screen, before anything is arranged."""
@@ -132,9 +230,6 @@ class GameScreen(QWidget):
         self.saved = QComboBox()
         self.saved.setMinimumWidth(220)
         self.saved.currentIndexChanged.connect(self._saved_chosen)
-
-        self.picker: Picker = picker_for(self.rules, self.palette_tokens)
-        self.picker.changed.connect(self._bet_changed)
         self.status = label("", "muted")
 
         self.contest = QLineEdit()
@@ -154,33 +249,35 @@ class GameScreen(QWidget):
         self.save.clicked.connect(self._save)
         self.delete = QPushButton(strings.DELETE_BET)
         self.delete.clicked.connect(self._delete)
-        self.clear_button = QPushButton(strings.CLEAR)
-        self.clear_button.clicked.connect(self.picker.clear)
-        self.mirror = QPushButton(strings.MIRROR_BET)
-        self.mirror.clicked.connect(self._mirror)
-        self.mirror.setVisible(self.rules.has_mirror)
 
     def _build_layout(self) -> None:
-        """Where each control sits. Picker on top, results underneath."""
-        picker_pane, picker_box = pane()
-        picker_box.addWidget(self.picker)
-        picker_box.addWidget(self.status)
-
+        """The bets and their results scroll together; the actions stay put."""
+        self.lines_box = QVBoxLayout()
+        self.lines_box.setSpacing(10)
         self.results_box = QVBoxLayout()
         self.results_box.setSpacing(10)
+        content = QVBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(10)
+        # Without this the scroll area squeezes the volantes to fit the window
+        # instead of scrolling; a ball grid pressed flat is unreadable.
+        content.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        content.addLayout(self.lines_box)
+        content.addLayout(self.results_box)
+        content.addStretch(1)
         holder = QWidget()
-        holder.setLayout(self.results_box)
-        scroller = QScrollArea()
-        scroller.setWidgetResizable(True)
-        scroller.setWidget(holder)
+        holder.setLayout(content)
+        self.scroller = QScrollArea()
+        self.scroller.setWidgetResizable(True)
+        self.scroller.setWidget(holder)
 
         box = QVBoxLayout(self)
         box.setContentsMargins(20, 18, 20, 18)
         box.setSpacing(10)
         box.addLayout(row(label(self.rules.name, "h1"), self.back, spacing=10))
         box.addLayout(row(label(strings.SAVED_BET, "label"), self.saved, spacing=8))
-        box.addWidget(picker_pane)
-        box.addLayout(row(self.clear_button, self.mirror, self.save, self.delete, spacing=8))
+        box.addWidget(self.scroller, stretch=1)
+        box.addLayout(row(self.save, self.delete, self.status, spacing=8))
         box.addLayout(
             row(
                 label(strings.CONTEST, "label"),
@@ -193,40 +290,95 @@ class GameScreen(QWidget):
                 spacing=8,
             )
         )
-        box.addWidget(scroller, stretch=1)
+
+    # --- the bets on screen ------------------------------------------------------
+
+    def bets(self) -> list[Bet]:
+        return [line.bet() for line in self.lines]
+
+    def add_line(self) -> BetLine:
+        line = BetLine(self.rules, self.palette_tokens)
+        line.changed.connect(self._bets_changed)
+        line.add.clicked.connect(self.add_line)
+        line.remove.clicked.connect(lambda _=False, gone=line: self.remove_line(gone))
+        line.mirror.clicked.connect(lambda _=False, which=line: self._mirror(which))
+        self.lines.append(line)
+        self.lines_box.addWidget(line)
+        self._renumber()
+        return line
+
+    def remove_line(self, line: BetLine) -> None:
+        if len(self.lines) == 1:
+            return
+        self.lines.remove(line)
+        self.lines_box.removeWidget(line)
+        line.deleteLater()
+        self._renumber()
+
+    def _set_line_count(self, wanted: int) -> None:
+        while len(self.lines) > wanted:
+            self.remove_line(self.lines[-1])
+        while len(self.lines) < wanted:
+            self.add_line()
+        for line in self.lines:
+            line.picker.clear()
+
+    def _renumber(self) -> None:
+        """Headings follow position, and + sits on the last line only."""
+        for position, line in enumerate(self.lines):
+            line.number(position)
+            line.remove.setVisible(len(self.lines) > 1)
+            line.add.setVisible(line is self.lines[-1])
+        self._bets_changed()
+
+    def _bets_changed(self) -> None:
+        self.go.setEnabled(all(line.playable() for line in self.lines))
+
+    def _first_unplayable(self) -> str | None:
+        """Why the bets cannot be used, naming the line, or None when all can."""
+        for position, line in enumerate(self.lines):
+            try:
+                validate_bet(line.bet())
+            except LotoConfereError as error:
+                heading = strings.BET_NUMBER.format(number=position + 1)
+                return strings.INVALID_BET.format(reason=f"{heading}: {error}")
+        return None
 
     # --- saved bets ------------------------------------------------------------
 
-    def reload_saved(self) -> None:
+    def reload_saved(self, select: int | None = None) -> None:
         self.saved.blockSignals(True)
         self.saved.clear()
         self.saved.addItem(strings.NEW_BET, None)
-        self.mine: list[SavedBet] = [
-            s for s in self.service.store.saved_bets() if s.bet.game == self.rules.key
+        self.mine: list[SavedBatch] = [
+            s for s in self.service.store.saved_batches() if s.game == self.rules.key
         ]
         for entry in self.mine:
             self.saved.addItem(entry.name, entry.id)
+        if select is not None:
+            self.saved.setCurrentIndex(max(self.saved.findData(select), 0))
         self.saved.blockSignals(False)
 
-    def current_saved(self) -> SavedBet | None:
+    def current_saved(self) -> SavedBatch | None:
         wanted = self.saved.currentData()
         return next((s for s in self.mine if s.id == wanted), None)
 
     def _saved_chosen(self) -> None:
         entry = self.current_saved()
         if entry is None:
-            self.picker.clear()
+            self._set_line_count(1)
             return
-        self.picker.load(entry.bet)
+        self._set_line_count(len(entry.bets))
+        for line, bet in zip(self.lines, entry.bets, strict=True):
+            line.picker.load(bet)
         if entry.run_start is not None and entry.run_count is not None:
             self.contest.setText(str(entry.run_start))
             self.count.setValue(entry.run_count)
 
     def _save(self) -> None:
-        try:
-            validate_bet(self.picker.bet())
-        except LotoConfereError as error:
-            self._complain(strings.INVALID_BET.format(reason=error))
+        problem = self._first_unplayable()
+        if problem is not None:
+            self._complain(problem)
             return
         existing = self.current_saved()
         suggestion = existing.name if existing else ""
@@ -239,50 +391,32 @@ class GameScreen(QWidget):
             self._complain(strings.NAME_REQUIRED)
             return
         start, count = self._run_wanted()
+        # The same name updates what was opened; a new name saves a new batch
+        # and leaves the old one as it was, which is how "save as" works here.
         if existing is not None and existing.name == name.strip():
-            self.service.store.update_bet(
-                existing.id, name.strip(), self.picker.bet(), start, count
-            )
+            self.service.store.update_batch(existing.id, name.strip(), self.bets(), start, count)
+            saved_id = existing.id
         else:
-            self.service.store.save_bet(name.strip(), self.picker.bet(), start, count)
-        self.reload_saved()
+            saved_id = self.service.store.save_batch(name.strip(), self.bets(), start, count)
+        self.reload_saved(select=saved_id)
         self.status.setText(strings.BET_SAVED)
 
     def _delete(self) -> None:
         entry = self.current_saved()
         if entry is None:
             return
-        self.service.store.delete_bet(entry.id)
+        self.service.store.delete_batch(entry.id)
         self.reload_saved()
-        self.picker.clear()
+        self._set_line_count(1)
         self.status.setText(strings.BET_DELETED)
 
-    def _mirror(self) -> None:
+    def _mirror(self, line: BetLine) -> None:
         try:
-            self.picker.load(mirror_bet(self.picker.bet()))
+            line.picker.load(mirror_bet(line.bet()))
         except LotoConfereError as error:
             self._complain(strings.INVALID_BET.format(reason=error))
 
     # --- checking ----------------------------------------------------------------
-
-    def _bet_changed(self) -> None:
-        bet = self.picker.bet()
-        try:
-            validate_bet(bet)
-        except LotoConfereError as error:
-            # An empty picker is a screen nobody has touched yet, not a mistake.
-            # Greeting someone with a validation error is a poor way to start.
-            self.status.setText(
-                strings.CHOSEN_COUNT.format(chosen=bet.size, needed=self.rules.minimum_bet_size)
-                if bet.size == 0
-                else str(error)
-            )
-            self.go.setEnabled(False)
-            return
-        self.status.setText(
-            strings.CHOSEN_COUNT.format(chosen=bet.size, needed=self.rules.minimum_bet_size)
-        )
-        self.go.setEnabled(True)
 
     def _run_wanted(self) -> tuple[int | None, int | None]:
         text = self.contest.text().strip()
@@ -292,27 +426,36 @@ class GameScreen(QWidget):
         return int(text), (count if count > 1 else None)
 
     def start(self) -> None:
-        bet = self.picker.bet()
-        try:
-            validate_bet(bet)
-        except LotoConfereError as error:
-            self._complain(strings.INVALID_BET.format(reason=error))
+        problem = self._first_unplayable()
+        if problem is not None:
+            self._complain(problem)
             return
 
+        bets = self.bets()
         clear(self.results_box)
-        self.checked: list[ContestResult] = []
+        self.checked: list[BetAnswer] = []
         self.go.setVisible(False)
         self.stop.setVisible(True)
         self.status.setText(strings.CHECKING)
 
         start, count = self._run_wanted()
-        self.job = Job(lambda cancel: self._produce(bet, start, count, cancel))
+        self.job = Job(lambda cancel: self._produce(bets, start, count, cancel))
         self.job.worker.found.connect(self._one_result)
         self.job.worker.failed.connect(self._complain)
         self.job.worker.finished.connect(self._done)
         self.job.start()
 
     def _produce(
+        self, bets: list[Bet], start: int | None, count: int | None, cancel: threading.Event
+    ) -> Iterator[BetAnswer]:
+        """Each bet in turn. The second bet onwards reads its draws from the cache."""
+        for position, bet in enumerate(bets):
+            if cancel.is_set():
+                return
+            for answer in self._produce_one(bet, start, count, cancel):
+                yield BetAnswer(position=position, answer=answer)
+
+    def _produce_one(
         self, bet: Bet, start: int | None, count: int | None, cancel: threading.Event
     ) -> Iterator[ContestResult]:
         if start is not None and count is not None:
@@ -328,9 +471,25 @@ class GameScreen(QWidget):
             return
         yield self.service.check_one(bet, contest)
 
-    def _one_result(self, answer: ContestResult) -> None:
-        self.checked.append(answer)
-        self.results_box.addWidget(results.contest_block(answer, self.palette_tokens))
+    def _one_result(self, found: BetAnswer) -> None:
+        first_of_bet = not self.checked or self.checked[-1].position != found.position
+        self.checked.append(found)
+        heading = None
+        if first_of_bet and len(self.lines) > 1:
+            heading = label(strings.BET_NUMBER.format(number=found.position + 1), "h2")
+            self.results_box.addWidget(heading)
+        block = results.contest_block(found.answer, self.palette_tokens)
+        self.results_box.addWidget(block)
+        if len(self.checked) == 1:
+            # Several volantes push the results out of sight, so the first one
+            # is brought to the top rather than left for the person to find.
+            # Deferred, because the new widget has no position until the layout
+            # has run.
+            top = heading or block
+            QTimer.singleShot(0, lambda: self._scroll_to(top))
+
+    def _scroll_to(self, widget: QWidget) -> None:
+        self.scroller.verticalScrollBar().setValue(widget.y())
 
     def _done(self) -> None:
         self.go.setVisible(True)
@@ -341,7 +500,7 @@ class GameScreen(QWidget):
             if last
             else strings.NEVER_UPDATED
         )
-        self._bet_changed()
+        self._bets_changed()
 
     def cancel(self) -> None:
         if self.job is not None:
@@ -442,18 +601,13 @@ class MainWindow(QMainWindow):
         if not outcomes:
             QMessageBox.information(self, strings.CHECK_ALL, strings.SAVED_COUNT_NONE)
             return
-        lines = []
-        for outcome in outcomes:
-            won = len(outcome.winning)
-            state = strings.RUN_PRIZED.format(count=won) if won else strings.NO_HITS
-            lines.append(f"{outcome.saved.name}: {state}")
-        QMessageBox.information(self, strings.CHECK_ALL, "\n".join(lines))
+        QMessageBox.information(self, strings.CHECK_ALL, check_all_report(outcomes))
 
     # --- import and export ---------------------------------------------------------
 
     def export_saved(self, path: str) -> None:
         try:
-            text = export_bets(self.service.store.saved_bets())
+            text = export_bets(self.service.store.saved_batches())
             with open(path, "w", encoding="utf-8") as handle:  # noqa: PTH123
                 handle.write(text)
         except OSError as error:
@@ -471,7 +625,7 @@ class MainWindow(QMainWindow):
             )
             return 0
         for entry in imported:
-            self.service.store.save_bet(entry.name, entry.bet, entry.run_start, entry.run_count)
+            self.service.store.save_batch(entry.name, entry.bets, entry.run_start, entry.run_count)
         self.lobby.refresh()
         return len(imported)
 

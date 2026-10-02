@@ -272,7 +272,7 @@ def test_a_run_that_finished_is_not_marked_cancelled(store):
 
 
 def test_check_all_checks_a_plain_bet_against_the_latest_contest(store):
-    store.save_bet("Do trabalho", a_bet())
+    store.save_batch("Do trabalho", (a_bet(),))
     service = Service(store, FakeSource())
     outcomes = service.check_all()
 
@@ -285,7 +285,7 @@ def test_check_all_checks_a_plain_bet_against_the_latest_contest(store):
 
 
 def test_check_all_checks_a_saved_run_across_its_contests(store):
-    store.save_bet("Teimosinha", a_bet(), run_start=3060, run_count=4)
+    store.save_batch("Teimosinha", (a_bet(),), run_start=3060, run_count=4)
     draws = {n: a_draw(contest=n) for n in (3060, 3061, 3062)}
     service = Service(store, FakeSource(draws=draws))
     outcomes = service.check_all()
@@ -300,7 +300,7 @@ def test_check_all_can_be_cancelled_between_bets(store):
     import threading
 
     for name in ("Uma", "Outra", "Terceira"):
-        store.save_bet(name, a_bet())
+        store.save_batch(name, (a_bet(),))
     cancel = threading.Event()
     cancel.set()
     service = Service(store, FakeSource())
@@ -308,11 +308,60 @@ def test_check_all_can_be_cancelled_between_bets(store):
 
 
 def test_a_game_with_nothing_known_yet_is_unavailable_not_zero_hits(store):
-    store.save_bet("Do trabalho", a_bet())
+    store.save_batch("Do trabalho", (a_bet(),))
     service = Service(store, FakeSource(latest_contest=None))
     outcome = service.check_all()[0]
     assert outcome.single is not None
     assert outcome.single.outcome is Outcome.UNAVAILABLE
+    assert outcome.winning == ()
+
+
+def test_check_all_reports_each_bet_of_a_batch_on_its_own(store):
+    store.save_batch("Dois volantes", (a_bet(), a_bet((1, 2, 3, 4, 5, 6))))
+    outcomes = Service(store, FakeSource()).check_all()
+
+    assert [(o.saved.name, o.position) for o in outcomes] == [
+        ("Dois volantes", 0),
+        ("Dois volantes", 1),
+    ]
+    assert len(outcomes[0].winning) == 1
+    assert outcomes[1].single is not None
+    assert outcomes[1].single.outcome is Outcome.CHECKED
+    assert outcomes[1].winning == ()
+
+
+def test_a_batch_run_is_checked_for_every_bet(store):
+    store.save_batch("Teimosinha", (a_bet(), a_bet()), run_start=3061, run_count=3)
+    draws = {n: a_draw(contest=n) for n in (3061, 3062)}
+    outcomes = Service(store, FakeSource(draws=draws)).check_all()
+    assert [o.run.total for o in outcomes if o.run is not None] == [3, 3]
+    assert all(len(o.run.pending) == 1 for o in outcomes if o.run is not None)
+
+
+def test_check_all_stops_between_the_bets_of_a_batch(store):
+    import threading
+
+    store.save_batch("Dois volantes", (a_bet(), a_bet()))
+    cancel = threading.Event()
+    service = Service(store, FakeSource())
+    original = service._check_saved
+
+    def check_then_cancel(saved, position, stop):
+        cancel.set()
+        return original(saved, position, stop)
+
+    service._check_saved = check_then_cancel  # type: ignore[method-assign]
+    assert len(service.check_all(cancel)) == 1
+
+
+def test_a_saved_bet_missing_its_month_is_unavailable_not_checked(store):
+    # Saved before the store kept the month: refused with the reason, never
+    # checked as if the month did not matter.
+    store.save_batch("Antiga", (Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25)),))
+    outcome = Service(store, FakeSource()).check_all()[0]
+    assert outcome.single is not None
+    assert outcome.single.outcome is Outcome.UNAVAILABLE
+    assert outcome.single.reason
     assert outcome.winning == ()
 
 

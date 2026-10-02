@@ -15,17 +15,17 @@ from collections.abc import Callable, Iterator
 
 from PySide6.QtCore import QObject, QThread, Signal
 
-from lotoconfere.service import ContestResult
+from lotoconfere.service import BetAnswer
 
 
 class RunWorker(QObject):
-    """Consumes an iterator of contest results on a worker thread."""
+    """Consumes an iterator of answers, one per bet and contest, on a worker thread."""
 
     found = Signal(object)
     finished = Signal()
     failed = Signal(str)
 
-    def __init__(self, produce: Callable[[], Iterator[ContestResult]]) -> None:
+    def __init__(self, produce: Callable[[], Iterator[BetAnswer]]) -> None:
         super().__init__()
         self._produce = produce
 
@@ -49,7 +49,7 @@ class Job:
     how Qt segfaults.
     """
 
-    def __init__(self, produce: Callable[[threading.Event], Iterator[ContestResult]]) -> None:
+    def __init__(self, produce: Callable[[threading.Event], Iterator[BetAnswer]]) -> None:
         self.cancel = threading.Event()
         self.thread = QThread()
         self.worker = RunWorker(lambda: produce(self.cancel))

@@ -24,13 +24,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from lotoconfere.core.check import check_bet
-from lotoconfere.core.errors import LotoConfereError, SourceError
+from lotoconfere.core.errors import InvalidBetError, LotoConfereError, SourceError
 from lotoconfere.core.models import Bet, CheckResult, Draw
 from lotoconfere.core.rules import validate_bet
 from lotoconfere.source.base import ResultsSource
 from lotoconfere.source.caixa import CaixaSource
 from lotoconfere.source.mirror import MirrorSource
-from lotoconfere.store.database import USE_MIRROR, SavedBet, Store
+from lotoconfere.store.database import USE_MIRROR, SavedBatch, Store
 
 log = logging.getLogger(__name__)
 
@@ -107,14 +107,23 @@ class RunSummary:
 
 
 @dataclass(frozen=True)
-class SavedBetOutcome:
-    """What one saved bet did when everything was checked at once.
+class BetAnswer:
+    """One contest's answer for one bet of several, by the bet's position."""
 
-    Exactly one of `single` and `run` is set: a bet with an active teimosinha is
-    checked across its run, and a bet without one against the latest contest.
+    position: int
+    answer: ContestResult
+
+
+@dataclass(frozen=True)
+class SavedBetOutcome:
+    """What one bet of a saved batch did when everything was checked at once.
+
+    Exactly one of `single` and `run` is set: a batch with an active teimosinha
+    is checked across its run, and one without against the latest contest.
     """
 
-    saved: SavedBet
+    saved: SavedBatch
+    position: int
     single: ContestResult | None = None
     run: RunSummary | None = None
 
@@ -250,32 +259,50 @@ class Service:
     # --- everything at once ---------------------------------------------------
 
     def check_all(self, cancel: threading.Event | None = None) -> list[SavedBetOutcome]:
-        """Check every saved bet: its run if it has one, the latest contest if not.
+        """Check every bet of every saved batch: its run if it has one, the latest if not.
 
-        Cancellable between bets and, for a bet with a run, between contests: a
-        shelf of saved teimosinhas is a lot of requests.
+        Cancellable between bets and, for a batch with a run, between contests:
+        a shelf of saved teimosinhas is a lot of requests.
         """
         outcomes: list[SavedBetOutcome] = []
-        for saved in self.store.saved_bets():
-            if cancel is not None and cancel.is_set():
-                break
-            outcomes.append(self._check_saved(saved, cancel))
+        for saved in self.store.saved_batches():
+            for position in range(len(saved.bets)):
+                if cancel is not None and cancel.is_set():
+                    return outcomes
+                outcomes.append(self._check_saved(saved, position, cancel))
         return outcomes
 
-    def _check_saved(self, saved: SavedBet, cancel: threading.Event | None) -> SavedBetOutcome:
-        if saved.run_start is not None and saved.run_count is not None:
+    def _check_saved(
+        self, saved: SavedBatch, position: int, cancel: threading.Event | None
+    ) -> SavedBetOutcome:
+        bet = saved.bets[position]
+        try:
+            if saved.run_start is not None and saved.run_count is not None:
+                return SavedBetOutcome(
+                    saved=saved,
+                    position=position,
+                    run=self.check_run(bet, saved.run_start, saved.run_count, cancel),
+                )
+            latest = self.latest_contest(bet.game)
+            if latest is None:
+                return SavedBetOutcome(
+                    saved=saved,
+                    position=position,
+                    single=ContestResult(
+                        contest=0,
+                        outcome=Outcome.UNAVAILABLE,
+                        reason="nenhum resultado disponivel para este jogo ainda",
+                    ),
+                )
+            return SavedBetOutcome(
+                saved=saved, position=position, single=self.check_one(bet, latest, latest)
+            )
+        except InvalidBetError as error:
+            # A bet saved before the store kept every field can be missing its
+            # month or trevos. It is refused with the reason, never checked as
+            # if the missing part did not matter.
             return SavedBetOutcome(
                 saved=saved,
-                run=self.check_run(saved.bet, saved.run_start, saved.run_count, cancel),
+                position=position,
+                single=ContestResult(contest=0, outcome=Outcome.UNAVAILABLE, reason=str(error)),
             )
-        latest = self.latest_contest(saved.bet.game)
-        if latest is None:
-            return SavedBetOutcome(
-                saved=saved,
-                single=ContestResult(
-                    contest=0,
-                    outcome=Outcome.UNAVAILABLE,
-                    reason="nenhum resultado disponivel para este jogo ainda",
-                ),
-            )
-        return SavedBetOutcome(saved=saved, single=self.check_one(saved.bet, latest, latest))

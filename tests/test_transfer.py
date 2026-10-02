@@ -5,10 +5,11 @@ import json
 import pytest
 
 from lotoconfere.core.models import Bet
-from lotoconfere.store.database import SavedBet
+from lotoconfere.store.database import SavedBatch
 from lotoconfere.store.transfer import (
     FORMAT,
     FORMAT_KEY,
+    FORMAT_ONE_BET_EACH,
     MAX_IMPORT_BYTES,
     BetFileError,
     export_bets,
@@ -21,18 +22,36 @@ MILIONARIA = Bet(game="maismilionaria", numbers=(3, 5, 12, 33, 38, 45), clovers=
 TIME = Bet(game="timemania", numbers=tuple(range(1, 11)), extra="CRB /AL")
 
 
-def saved(bet, name="Minha aposta", run_start=None, run_count=None):
-    return SavedBet(id=1, name=name, bet=bet, run_start=run_start, run_count=run_count)
+def saved(*bets, name="Minha aposta", run_start=None, run_count=None):
+    return SavedBatch(
+        id=1,
+        name=name,
+        game=bets[0].game,
+        bets=bets,
+        run_start=run_start,
+        run_count=run_count,
+    )
 
 
 def a_file(**changes):
+    """A format 1 file: one bet per entry, which still has to import."""
     row = {
         "nome": "Do trabalho",
         "jogo": "megasena",
         "numeros": [5, 9, 11, 17, 18, 38],
     }
     row.update(changes)
-    return json.dumps({FORMAT_KEY: FORMAT, "apostas": [row]})
+    return json.dumps({FORMAT_KEY: FORMAT_ONE_BET_EACH, "apostas": [row]})
+
+
+def a_batch_file(bets=None, **changes):
+    group = {
+        "nome": "Dois volantes",
+        "jogo": "megasena",
+        "apostas": bets if bets is not None else [{"numeros": [5, 9, 11, 17, 18, 38]}],
+    }
+    group.update(changes)
+    return json.dumps({FORMAT_KEY: FORMAT, "grupos": [group]})
 
 
 @pytest.mark.parametrize("bet", [MEGA, SUPER, MILIONARIA, TIME])
@@ -40,14 +59,27 @@ def test_every_shape_survives_a_round_trip(bet):
     text = export_bets([saved(bet)])
     back = import_bets(text)
     assert len(back) == 1
-    assert back[0].bet == bet
+    assert back[0].bets == (bet,)
     assert back[0].name == "Minha aposta"
 
 
+def test_a_batch_survives_a_round_trip_with_its_bets_in_order():
+    other = Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6))
+    back = import_bets(export_bets([saved(other, MEGA, other)]))
+    assert back[0].bets == (other, MEGA, other)
+
+
 def test_a_teimosinha_survives_a_round_trip():
-    text = export_bets([saved(MEGA, run_start=3060, run_count=8)])
+    text = export_bets([saved(MEGA, MEGA, run_start=3060, run_count=8)])
     back = import_bets(text)
     assert (back[0].run_start, back[0].run_count) == (3060, 8)
+
+
+def test_a_format_one_file_imports_each_bet_as_a_batch_of_one():
+    back = import_bets(a_file(teimosinha_inicio=3060, teimosinha_quantidade=4))
+    assert back[0].name == "Do trabalho"
+    assert back[0].bets == (MEGA,)
+    assert (back[0].run_start, back[0].run_count) == (3060, 4)
 
 
 def test_an_empty_list_is_fine():
@@ -86,20 +118,62 @@ def test_a_file_from_another_format_version_is_refused():
         import_bets(json.dumps({FORMAT_KEY: 99, "apostas": []}))
 
 
-def test_a_file_without_a_list_of_bets_is_refused():
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {FORMAT_KEY: FORMAT_ONE_BET_EACH, "apostas": "nenhuma"},
+        {FORMAT_KEY: FORMAT, "grupos": "nenhum"},
+        {FORMAT_KEY: FORMAT},
+    ],
+)
+def test_a_file_without_a_list_of_bets_is_refused(payload):
     with pytest.raises(BetFileError, match="lista de apostas"):
-        import_bets(json.dumps({FORMAT_KEY: FORMAT, "apostas": "nenhuma"}))
+        import_bets(json.dumps(payload))
 
 
 def test_too_many_bets_is_refused():
-    payload = {FORMAT_KEY: FORMAT, "apostas": [{"nome": "x"}] * 10_001}
+    payload = {FORMAT_KEY: FORMAT_ONE_BET_EACH, "apostas": [{"nome": "x"}] * 10_001}
+    with pytest.raises(BetFileError, match="apostas demais"):
+        import_bets(json.dumps(payload))
+
+
+def test_too_many_bets_across_small_batches_is_refused():
+    group = {"nome": "x", "jogo": "megasena", "apostas": [{}] * 100}
+    payload = {FORMAT_KEY: FORMAT, "grupos": [group] * 101}
     with pytest.raises(BetFileError, match="apostas demais"):
         import_bets(json.dumps(payload))
 
 
 def test_a_bet_that_is_not_an_object_is_refused():
     with pytest.raises(BetFileError, match="formato inesperado"):
-        import_bets(json.dumps({FORMAT_KEY: FORMAT, "apostas": ["uma aposta"]}))
+        import_bets(json.dumps({FORMAT_KEY: FORMAT_ONE_BET_EACH, "apostas": ["uma aposta"]}))
+
+
+@pytest.mark.parametrize("bets", [[], "nenhuma", None])
+def test_a_batch_without_bets_is_refused(bets):
+    with pytest.raises(BetFileError, match="não tem apostas"):
+        import_bets(a_batch_file(bets=bets) if bets is not None else a_batch_file(apostas=None))
+
+
+def test_a_bet_in_a_batch_that_is_not_an_object_is_refused():
+    with pytest.raises(BetFileError, match="grupo 1: formato inesperado"):
+        import_bets(a_batch_file(bets=["uma aposta"]))
+
+
+def test_a_bad_bet_in_a_batch_is_named_by_batch_and_position():
+    bets = [{"numeros": [5, 9, 11, 17, 18, 38]}, {"numeros": [1, 2, 3]}]
+    with pytest.raises(BetFileError, match=r"grupo 1 \(Dois volantes\), aposta 2"):
+        import_bets(a_batch_file(bets=bets))
+
+
+def test_a_batch_naming_a_game_we_do_not_know_is_refused():
+    with pytest.raises(BetFileError, match="grupo 1: jogo desconhecido"):
+        import_bets(a_batch_file(jogo="lotogato"))
+
+
+def test_a_batch_with_an_impossible_teimosinha_is_refused():
+    with pytest.raises(BetFileError, match="grupo 1: teimosinha inválida"):
+        import_bets(a_batch_file(teimosinha_quantidade=0))
 
 
 @pytest.mark.parametrize("name", [None, "", "   ", 42])
@@ -175,5 +249,5 @@ def test_a_bet_file_cannot_smuggle_in_a_host_or_a_path():
     # never acted on.
     text = a_file(url="https://exemplo.invalido/x", caminho="C:/Windows/System32")
     imported = import_bets(text)
-    assert imported[0].bet.game == "megasena"
+    assert imported[0].bets[0].game == "megasena"
     assert not hasattr(imported[0], "url")

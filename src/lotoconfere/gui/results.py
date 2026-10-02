@@ -19,7 +19,7 @@ from lotoconfere.core.rules import Shape, rules_for
 from lotoconfere.gui import strings
 from lotoconfere.gui.theme import Palette
 from lotoconfere.gui.widgets import Ball, BallState, Chip, label, pane, row
-from lotoconfere.service import ContestResult, Outcome, RunSummary
+from lotoconfere.service import ContestResult, Outcome, RunSummary, SavedBetOutcome
 
 
 def source_name(source: Source) -> str:
@@ -176,3 +176,22 @@ def run_summary_line(summary: RunSummary) -> str:
     if summary.unavailable:
         parts.append(strings.RUN_UNAVAILABLE.format(count=len(summary.unavailable)))
     return " · ".join(parts)
+
+
+def single_line(answer: ContestResult) -> str:
+    """One contest in words, for the check-all report. Never zero hits for a non-result."""
+    if answer.outcome is Outcome.PENDING:
+        return strings.NOT_DRAWN
+    if answer.result is None:
+        return f"{strings.UNAVAILABLE}: {answer.reason}" if answer.reason else strings.UNAVAILABLE
+    counts = " · ".join(strings.hits(n) for n in answer.result.hit_counts)
+    return f"{counts} · {strings.PRIZED.lower()}" if answer.result.won else counts
+
+
+def saved_outcome_line(outcome: SavedBetOutcome) -> str:
+    """What one saved bet did, in the same honest terms the game screen uses."""
+    if outcome.run is not None:
+        return run_summary_line(outcome.run)
+    if outcome.single is None:  # pragma: no cover - exactly one of the two is set
+        return strings.UNAVAILABLE
+    return single_line(outcome.single)

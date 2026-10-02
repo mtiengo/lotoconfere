@@ -321,3 +321,24 @@ def test_a_font_that_will_not_load_is_counted_honestly(qapp, monkeypatch):
 
     monkeypatch.setattr(QFontDatabase, "addApplicationFont", lambda _: -1)
     assert theme.load_fonts() == 0
+
+
+# --- the check-all report, one bet in words ---------------------------------------
+
+
+def test_one_contest_in_words_is_honest_about_every_outcome():
+    from lotoconfere.service import ContestResult, Outcome
+
+    assert (
+        results.single_line(ContestResult(contest=1, outcome=Outcome.PENDING)) == strings.NOT_DRAWN
+    )
+    assert (
+        results.single_line(ContestResult(contest=1, outcome=Outcome.UNAVAILABLE))
+        == strings.UNAVAILABLE
+    )
+    assert (
+        results.single_line(
+            ContestResult(contest=1, outcome=Outcome.UNAVAILABLE, reason="sem rede")
+        )
+        == f"{strings.UNAVAILABLE}: sem rede"
+    )

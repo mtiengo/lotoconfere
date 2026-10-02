@@ -33,8 +33,8 @@ SETTINGS = "Configurações"
 # --- the game screen --------------------------------------------------------------
 
 BACK = "Voltar"
-SAVED_BET = "Aposta salva"
-NEW_BET = "— nova aposta —"
+SAVED_BET = "Apostas salvas"
+NEW_BET = "— novas apostas —"
 CONTEST = "Concurso"
 LATEST_CONTEST = "Último concurso"
 TEIMOSINHA = "Teimosinha"
@@ -45,6 +45,9 @@ CHECKING = "Consultando…"
 CHECKING_CONTEST = "Consultando o concurso {contest}…"
 CLEAR = "Limpar"
 MIRROR_BET = "Gerar aposta-espelho"
+BET_NUMBER = "Aposta {number}"
+ADD_BET = "Adicionar outra aposta"
+REMOVE_BET = "Remover esta aposta"
 TYPED_HINT = "Ou digite os números separados por espaço"
 
 CHOSEN_COUNT = "{chosen} de {needed} números escolhidos"
@@ -57,16 +60,16 @@ MONTH = "Mês de Sorte"
 
 # --- saved bets --------------------------------------------------------------------
 
-SAVE_BET = "Salvar aposta"
-BET_NAME = "Nome da aposta"
+SAVE_BET = "Salvar apostas"
+BET_NAME = "Nome para estas apostas"
 DELETE_BET = "Excluir"
 EXPORT_BETS = "Exportar apostas"
 IMPORT_BETS = "Importar apostas"
-BET_SAVED = "Aposta salva."
-BET_DELETED = "Aposta excluída."
+BET_SAVED = "Apostas salvas."
+BET_DELETED = "Apostas excluídas."
 BETS_EXPORTED = "{count} apostas exportadas."
 BETS_IMPORTED = "{count} apostas importadas."
-NAME_REQUIRED = "Dê um nome para a aposta antes de salvar."
+NAME_REQUIRED = "Dê um nome para as apostas antes de salvar."
 
 # --- results -------------------------------------------------------------------------
 

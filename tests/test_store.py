@@ -110,36 +110,58 @@ def test_a_file_from_a_newer_version_is_refused_not_opened(tmp_path):
 # --- saved bets -------------------------------------------------------------
 
 
+MEGA = Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6))
+OTHER_MEGA = Bet(game="megasena", numbers=(10, 20, 30, 40, 50, 60))
+
+
 def test_a_bet_can_be_saved_listed_and_deleted(store):
-    bet = Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6))
-    bet_id = store.save_bet("Do trabalho", bet)
-    saved = list(store.saved_bets())
+    batch_id = store.save_batch("Do trabalho", (MEGA,))
+    saved = list(store.saved_batches())
     assert len(saved) == 1
     assert saved[0].name == "Do trabalho"
-    assert saved[0].bet == bet
+    assert saved[0].game == "megasena"
+    assert saved[0].bets == (MEGA,)
     assert saved[0].has_run is False
 
-    store.delete_bet(bet_id)
-    assert list(store.saved_bets()) == []
+    store.delete_batch(batch_id)
+    assert list(store.saved_batches()) == []
 
 
-def test_a_saved_bet_can_carry_a_teimosinha_run(store):
-    bet = Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6))
-    store.save_bet("Teimosinha", bet, run_start=3060, run_count=8)
-    saved = next(iter(store.saved_bets()))
+def test_a_batch_keeps_its_bets_in_the_order_they_were_entered(store):
+    store.save_batch("Dois volantes", (OTHER_MEGA, MEGA, OTHER_MEGA))
+    assert next(iter(store.saved_batches())).bets == (OTHER_MEGA, MEGA, OTHER_MEGA)
+
+
+def test_deleting_one_batch_leaves_the_others_and_their_bets(store):
+    first = store.save_batch("Um", (MEGA, OTHER_MEGA))
+    store.save_batch("Outro", (OTHER_MEGA,))
+    store.delete_batch(first)
+    saved = list(store.saved_batches())
+    assert [(s.name, s.bets) for s in saved] == [("Outro", (OTHER_MEGA,))]
+
+
+def test_a_batch_can_carry_a_shared_teimosinha_run(store):
+    store.save_batch("Teimosinha", (MEGA, OTHER_MEGA), run_start=3060, run_count=8)
+    saved = next(iter(store.saved_batches()))
     assert (saved.run_start, saved.run_count) == (3060, 8)
     assert saved.has_run is True
 
 
-def test_a_saved_bet_can_be_edited(store):
-    bet = Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6))
-    bet_id = store.save_bet("Antigo", bet)
-    changed = Bet(game="megasena", numbers=(10, 20, 30, 40, 50, 60))
-    store.update_bet(bet_id, "Novo", changed, run_start=3070, run_count=4)
-    saved = next(iter(store.saved_bets()))
-    assert saved.name == "Novo"
-    assert saved.bet == changed
-    assert (saved.run_start, saved.run_count) == (3070, 4)
+def test_a_batch_can_be_edited_down_to_fewer_bets(store):
+    batch_id = store.save_batch("Antigo", (MEGA, OTHER_MEGA, MEGA))
+    store.update_batch(batch_id, "Novo", (OTHER_MEGA,), run_start=3070, run_count=4)
+    saved = list(store.saved_batches())
+    assert len(saved) == 1
+    assert saved[0].name == "Novo"
+    assert saved[0].bets == (OTHER_MEGA,)
+    assert (saved[0].run_start, saved[0].run_count) == (3070, 4)
+
+
+@pytest.mark.parametrize("bets", [(), (MEGA, Bet(game="quina", numbers=(1, 2, 3, 4, 5)))])
+def test_an_empty_or_mixed_batch_is_a_bug_not_a_saved_batch(store, bets):
+    with pytest.raises(ValueError, match="same game"):
+        store.save_batch("Errado", bets)
+    assert list(store.saved_batches()) == []
 
 
 # Every field a bet can carry, one game per shape that has more than numbers.
@@ -154,50 +176,115 @@ FULL_BETS = [
 @pytest.mark.parametrize("bet", FULL_BETS, ids=lambda bet: bet.game)
 def test_a_saved_bet_keeps_every_field_it_was_saved_with(store, bet):
     # A Dia de Sorte bet saved without its month is checked as a different bet.
-    store.save_bet("Completa", bet)
-    assert next(iter(store.saved_bets())).bet == bet
+    store.save_batch("Completa", (bet, bet))
+    assert next(iter(store.saved_batches())).bets == (bet, bet)
 
 
 @pytest.mark.parametrize("bet", FULL_BETS, ids=lambda bet: bet.game)
 def test_editing_a_saved_bet_keeps_every_field(store, bet):
-    bet_id = store.save_bet("Antiga", Bet(game=bet.game))
-    store.update_bet(bet_id, "Completa", bet)
-    assert next(iter(store.saved_bets())).bet == bet
+    batch_id = store.save_batch("Antiga", (Bet(game=bet.game),))
+    store.update_batch(batch_id, "Completa", (bet,))
+    assert next(iter(store.saved_batches())).bets == (bet,)
+
+
+def old_file(path, version, saved_bet_table, rows):
+    connection = sqlite3.connect(path)
+    connection.executescript(f"{saved_bet_table};\n{rows};\nPRAGMA user_version = {version};")
+    connection.commit()
+    connection.close()
+
+
+V2_SAVED_BET = """
+CREATE TABLE saved_bet (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, game TEXT NOT NULL,
+    numbers TEXT NOT NULL, run_start INTEGER, run_count INTEGER
+)"""
+V3_SAVED_BET = """
+CREATE TABLE saved_bet (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, game TEXT NOT NULL,
+    numbers TEXT NOT NULL, extra TEXT, clovers TEXT NOT NULL DEFAULT '[]',
+    columns TEXT NOT NULL DEFAULT '[]', run_start INTEGER, run_count INTEGER
+)"""
 
 
 def test_a_version_two_file_keeps_its_saved_bets(tmp_path):
     # Bets saved before the extra fields existed open with those fields empty,
     # which validation then refuses -- they are never filled in by a guess.
     path = tmp_path / "v2.sqlite3"
-    connection = sqlite3.connect(path)
-    connection.executescript(
-        """
-        CREATE TABLE saved_bet (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, game TEXT NOT NULL,
-            numbers TEXT NOT NULL, run_start INTEGER, run_count INTEGER
-        );
-        INSERT INTO saved_bet (name, game, numbers, run_start, run_count) VALUES
-            ('Antiga', 'diadesorte', '[1,5,9,13,17,21,25]', 3100, 4);
-        PRAGMA user_version = 2;
-        """
+    old_file(
+        path,
+        2,
+        V2_SAVED_BET,
+        "INSERT INTO saved_bet (name, game, numbers, run_start, run_count) VALUES "
+        "('Antiga', 'diadesorte', '[1,5,9,13,17,21,25]', 3100, 4)",
     )
+
+    with Store(path) as migrated:
+        kept = next(iter(migrated.saved_batches()))
+        assert kept.name == "Antiga"
+        assert kept.bets == (Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25)),)
+        assert (kept.run_start, kept.run_count) == (3100, 4)
+        migrated.save_batch("Nova", (FULL_BETS[0],))
+        assert list(migrated.saved_batches())[1].bets == (FULL_BETS[0],)
+
+
+def test_a_version_three_file_turns_each_bet_into_a_batch_of_one(tmp_path):
+    path = tmp_path / "v3.sqlite3"
+    old_file(
+        path,
+        3,
+        V3_SAVED_BET,
+        "INSERT INTO saved_bet (id, name, game, numbers, extra, run_start, run_count) VALUES "
+        "(7, 'Do mes', 'diadesorte', '[1,5,9,13,17,21,25]', 'Setembro', NULL, NULL), "
+        "(9, 'Mega', 'megasena', '[1,2,3,4,5,6]', NULL, 3060, 8)",
+    )
+
+    with Store(path) as migrated:
+        saved = list(migrated.saved_batches())
+        assert [(s.id, s.name, s.bets) for s in saved] == [
+            (7, "Do mes", (FULL_BETS[0],)),
+            (9, "Mega", (MEGA,)),
+        ]
+        assert (saved[1].run_start, saved[1].run_count) == (3060, 8)
+        tables = {
+            row[0] for row in migrated._read("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        assert "saved_bet" not in tables
+
+
+def test_a_batch_migration_interrupted_before_the_version_bump_runs_again_cleanly(tmp_path):
+    # The copy happened and the old table is still there: running it a second
+    # time must not duplicate a bet.
+    path = tmp_path / "half.sqlite3"
+    old_file(
+        path,
+        3,
+        V3_SAVED_BET,
+        "INSERT INTO saved_bet (id, name, game, numbers) VALUES "
+        "(1, 'Mega', 'megasena', '[1,2,3,4,5,6]')",
+    )
+    with Store(path):
+        pass
+    connection = sqlite3.connect(path)
+    connection.executescript(f"{V3_SAVED_BET};")
+    connection.execute(
+        "INSERT INTO saved_bet (id, name, game, numbers) VALUES (1, 'Mega', 'megasena', ?)",
+        ("[1,2,3,4,5,6]",),
+    )
+    connection.execute("PRAGMA user_version = 3")
     connection.commit()
     connection.close()
 
-    with Store(path) as migrated:
-        kept = next(iter(migrated.saved_bets()))
-        assert kept.name == "Antiga"
-        assert kept.bet == Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25))
-        assert (kept.run_start, kept.run_count) == (3100, 4)
-        migrated.save_bet("Nova", FULL_BETS[0])
-        assert list(migrated.saved_bets())[1].bet == FULL_BETS[0]
+    with Store(path) as reopened:
+        saved = list(reopened.saved_batches())
+        assert [(s.name, s.bets) for s in saved] == [("Mega", (MEGA,))]
 
 
 def test_a_name_with_a_quote_in_it_is_just_a_name(store):
     # Parameterised queries only; this is the test that says so out loud.
-    nasty = "'; DROP TABLE saved_bet; --"
-    store.save_bet(nasty, Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6)))
-    saved = list(store.saved_bets())
+    nasty = "'; DROP TABLE saved_batch; --"
+    store.save_batch(nasty, (Bet(game="megasena", numbers=(1, 2, 3, 4, 5, 6)),))
+    saved = list(store.saved_batches())
     assert len(saved) == 1
     assert saved[0].name == nasty
 

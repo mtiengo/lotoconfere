@@ -16,7 +16,7 @@ from lotoconfere.core.models import Bet, Draw, PrizeTier, Source
 from lotoconfere.gui import results, strings
 from lotoconfere.gui.theme import LIGHT
 from lotoconfere.gui.window import AboutBox, GameScreen, Lobby, MainWindow, SettingsBox, clear
-from lotoconfere.service import ContestResult, Outcome, Service
+from lotoconfere.service import BetAnswer, ContestResult, Outcome, Service
 from lotoconfere.store.database import USE_MIRROR, Store
 
 DRAWN = (5, 9, 11, 17, 18, 38)
@@ -70,7 +70,7 @@ def window(qtbot, service):
 
 
 def pick(screen, numbers):
-    screen.picker.load(Bet(game=screen.rules.key, numbers=tuple(numbers)))
+    screen.lines[0].picker.load(Bet(game=screen.rules.key, numbers=tuple(numbers)))
 
 
 def texts(widget):
@@ -93,7 +93,7 @@ def test_the_lobby_counts_saved_bets(qtbot, service):
     lobby = Lobby(LIGHT, service)
     qtbot.addWidget(lobby)
     assert lobby.count.text() == strings.SAVED_COUNT_NONE
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     lobby.refresh()
     assert lobby.count.text() == strings.SAVED_COUNT_ONE
 
@@ -197,7 +197,7 @@ def test_the_check_button_is_off_until_the_bet_is_playable(qtbot, window):
 def test_an_untouched_screen_does_not_greet_you_with_an_error(qtbot, window):
     window.open_game("megasena")
     screen = window.stack.currentWidget()
-    assert screen.status.text() == strings.CHOSEN_COUNT.format(chosen=0, needed=6)
+    assert screen.lines[0].status.text() == strings.CHOSEN_COUNT.format(chosen=0, needed=6)
 
 
 def test_a_cancelled_run_says_it_stopped(qtbot, window):
@@ -217,39 +217,39 @@ def test_a_cancelled_run_says_it_stopped(qtbot, window):
 
 
 def test_a_saved_bet_can_be_loaded_from_the_dropdown(qtbot, window, service):
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN), 3060, 8)
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),), 3060, 8)
     window.open_game("megasena")
     screen = window.stack.currentWidget()
     screen.saved.setCurrentIndex(1)
-    assert screen.picker.bet().numbers == DRAWN
+    assert screen.lines[0].bet().numbers == DRAWN
     assert screen.contest.text() == "3060"
     assert screen.count.value() == 8
 
 
 def test_choosing_new_bet_clears_the_picker(qtbot, window, service):
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.open_game("megasena")
     screen = window.stack.currentWidget()
     screen.saved.setCurrentIndex(1)
     screen.saved.setCurrentIndex(0)
-    assert screen.picker.bet().numbers == ()
+    assert screen.lines[0].bet().numbers == ()
 
 
 def test_only_this_games_bets_are_offered(qtbot, window, service):
-    service.store.save_bet("Mega", Bet(game="megasena", numbers=DRAWN))
-    service.store.save_bet("Quina", Bet(game="quina", numbers=(1, 2, 3, 4, 5)))
+    service.store.save_batch("Mega", (Bet(game="megasena", numbers=DRAWN),))
+    service.store.save_batch("Quina", (Bet(game="quina", numbers=(1, 2, 3, 4, 5)),))
     window.open_game("quina")
     screen = window.stack.currentWidget()
     assert [s.name for s in screen.mine] == ["Quina"]
 
 
 def test_deleting_a_saved_bet_removes_it(qtbot, window, service):
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.open_game("megasena")
     screen = window.stack.currentWidget()
     screen.saved.setCurrentIndex(1)
     screen._delete()
-    assert list(service.store.saved_bets()) == []
+    assert list(service.store.saved_batches()) == []
     assert screen.status.text() == strings.BET_DELETED
 
 
@@ -286,7 +286,7 @@ def test_cancelling_the_name_dialog_saves_nothing(qtbot, window, monkeypatch, se
     pick(screen, DRAWN)
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("", False))
     screen._save()
-    assert list(service.store.saved_bets()) == []
+    assert list(service.store.saved_batches()) == []
 
 
 def test_an_unplayable_bet_cannot_be_saved(qtbot, window, monkeypatch):
@@ -302,16 +302,16 @@ def test_an_unplayable_bet_cannot_be_saved(qtbot, window, monkeypatch):
 def test_editing_a_saved_bet_keeps_one_entry(qtbot, window, monkeypatch, service):
     from PySide6.QtWidgets import QInputDialog
 
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.open_game("megasena")
     screen = window.stack.currentWidget()
     screen.saved.setCurrentIndex(1)
     pick(screen, (1, 2, 3, 4, 5, 6))
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Do trabalho", True))
     screen._save()
-    saved = list(service.store.saved_bets())
+    saved = list(service.store.saved_batches())
     assert len(saved) == 1
-    assert saved[0].bet.numbers == (1, 2, 3, 4, 5, 6)
+    assert saved[0].bets[0].numbers == (1, 2, 3, 4, 5, 6)
 
 
 def test_a_saved_dia_de_sorte_bet_comes_back_with_its_month(qtbot, window, monkeypatch, service):
@@ -320,14 +320,213 @@ def test_a_saved_dia_de_sorte_bet_comes_back_with_its_month(qtbot, window, monke
     window.open_game("diadesorte")
     screen = window.stack.currentWidget()
     month = screen.rules.extra_options[-1]
-    screen.picker.load(Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25), extra=month))
+    screen.lines[0].picker.load(
+        Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25), extra=month)
+    )
     monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Do mês", True))
     screen._save()
 
-    screen.picker.clear()
+    screen.lines[0].picker.clear()
     screen.saved.setCurrentIndex(1)
-    assert screen.picker.bet().extra == month
-    assert next(iter(service.store.saved_bets())).bet.extra == month
+    assert screen.lines[0].bet().extra == month
+    assert next(iter(service.store.saved_batches())).bets[0].extra == month
+
+
+# --- several bets at once -----------------------------------------------------------
+
+OTHER = (1, 2, 3, 4, 6, 7)  # none of them drawn
+
+
+def fill(screen, *bets):
+    """One line per bet, added the way a person adds them."""
+    while len(screen.lines) < len(bets):
+        screen.lines[-1].add.click()
+    for line, numbers in zip(screen.lines, bets, strict=True):
+        line.picker.load(Bet(game=screen.rules.key, numbers=tuple(numbers)))
+
+
+def test_plus_adds_a_numbered_line_below_and_moves_to_it(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    first = screen.lines[0]
+    assert first.add.isVisibleTo(screen)
+    assert not first.remove.isVisibleTo(screen)
+
+    first.add.click()
+    assert [line.heading.text() for line in screen.lines] == [
+        strings.BET_NUMBER.format(number=1),
+        strings.BET_NUMBER.format(number=2),
+    ]
+    assert not first.add.isVisibleTo(screen)
+    assert screen.lines[1].add.isVisibleTo(screen)
+    assert all(line.remove.isVisibleTo(screen) for line in screen.lines)
+
+
+def test_the_trash_can_removes_its_own_line_and_renumbers(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, OTHER, DRAWN)
+    screen.lines[1].remove.click()
+    assert screen.bets() == [Bet(game="megasena", numbers=DRAWN)] * 2
+    assert screen.lines[1].heading.text() == strings.BET_NUMBER.format(number=2)
+
+
+def test_the_last_line_cannot_be_removed(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    screen.remove_line(screen.lines[0])
+    assert len(screen.lines) == 1
+
+
+def test_checking_waits_until_every_line_is_playable(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, (1, 2))
+    assert screen.go.isEnabled() is False
+    screen.lines[1].picker.load(Bet(game="megasena", numbers=OTHER))
+    assert screen.go.isEnabled() is True
+
+
+def test_an_unplayable_line_is_named_in_the_complaint(qtbot, window, monkeypatch):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    complaints: list[str] = []
+    monkeypatch.setattr(screen, "_complain", complaints.append)
+    fill(screen, DRAWN, (1, 2))
+    screen._save()
+    assert len(complaints) == 1
+    assert strings.BET_NUMBER.format(number=2) in complaints[0]
+
+
+def test_several_lines_save_as_one_batch_of_separate_bets(qtbot, window, monkeypatch, service):
+    from PySide6.QtWidgets import QInputDialog
+
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, OTHER)
+    screen.contest.setText("1308")
+    screen.count.setValue(4)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Dois volantes", True))
+    screen._save()
+
+    saved = list(service.store.saved_batches())
+    assert len(saved) == 1
+    assert [bet.numbers for bet in saved[0].bets] == [DRAWN, OTHER]
+    assert (saved[0].run_start, saved[0].run_count) == (1308, 4)
+    # What was just saved stays open, so the next save edits it.
+    assert screen.current_saved() is not None
+    assert screen.current_saved().name == "Dois volantes"
+
+
+def test_opening_a_batch_shows_one_line_per_bet(qtbot, window, service):
+    bets = tuple(Bet(game="megasena", numbers=n) for n in (DRAWN, OTHER, DRAWN))
+    service.store.save_batch("Tres", bets)
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    screen.saved.setCurrentIndex(1)
+    assert screen.bets() == list(bets)
+    screen.saved.setCurrentIndex(0)
+    assert len(screen.lines) == 1
+    assert screen.lines[0].bet().numbers == ()
+
+
+def test_saving_under_a_new_name_leaves_the_old_batch_alone(qtbot, window, monkeypatch, service):
+    # Five bets on two tickets at one contest; later, one ticket of three.
+    from PySide6.QtWidgets import QInputDialog
+
+    bets = tuple(Bet(game="megasena", numbers=n) for n in (DRAWN, OTHER, DRAWN))
+    service.store.save_batch("Dois volantes", bets, 1308, 4)
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    screen.saved.setCurrentIndex(1)
+    screen.lines[2].remove.click()
+    screen.contest.setText("1313")
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Um volante", True))
+    screen._save()
+
+    saved = {s.name: s for s in service.store.saved_batches()}
+    assert saved["Dois volantes"].bets == bets
+    assert saved["Dois volantes"].run_start == 1308
+    assert saved["Um volante"].bets == bets[:2]
+    assert saved["Um volante"].run_start == 1313
+
+
+def test_each_bet_gets_its_own_results_under_its_own_heading(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, OTHER)
+    screen.contest.setText(str(LATEST))
+    screen.count.setValue(2)
+    screen.start()
+    qtbot.waitUntil(lambda: not screen.job.running(), timeout=8000)
+
+    # Two headings and two contests under each, one of them not drawn yet.
+    assert screen.results_box.count() == 6
+    shown = texts(screen)
+    assert shown.count(strings.BET_NUMBER.format(number=2)) == 2  # the line and the result
+    assert shown.count(strings.NOT_DRAWN) == 2
+
+
+def test_the_first_result_is_scrolled_into_view(qtbot, window):
+    # Two volantes fill the window; the results must not be left below them.
+    window.resize(820, 780)
+    window.show()
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, OTHER)
+    screen.start()
+    qtbot.waitUntil(lambda: not screen.job.running(), timeout=5000)
+    qtbot.waitUntil(lambda: screen.scroller.verticalScrollBar().value() > 0, timeout=5000)
+
+
+def test_producing_stops_between_bets_once_cancelled(qtbot, window):
+    import threading
+
+    window.open_game("megasena")
+    screen = window.screens["megasena"]
+    cancel = threading.Event()
+    bets = [Bet(game="megasena", numbers=DRAWN), Bet(game="megasena", numbers=OTHER)]
+    produced = []
+    for found in screen._produce(bets, None, None, cancel):
+        produced.append(found)
+        cancel.set()
+    assert [found.position for found in produced] == [0]
+
+
+def test_the_lobby_counts_bets_not_batches(qtbot, service):
+    lobby = Lobby(LIGHT, service)
+    qtbot.addWidget(lobby)
+    service.store.save_batch("Dois", (Bet(game="megasena", numbers=DRAWN),) * 2)
+    lobby.refresh()
+    assert lobby.count.text() == strings.saved_count(2)
+
+
+def test_check_all_lists_every_bet_of_a_batch_under_its_name(qtbot, window, service):
+    from lotoconfere.gui.window import check_all_report
+
+    service.store.save_batch(
+        "Dois volantes", tuple(Bet(game="megasena", numbers=n) for n in (DRAWN, OTHER))
+    )
+    service.store.save_batch("Sozinha", (Bet(game="megasena", numbers=OTHER),))
+    lines = check_all_report(service.check_all()).splitlines()
+    assert lines[0] == "Dois volantes"
+    assert lines[1].strip().startswith(strings.BET_NUMBER.format(number=1))
+    assert strings.PRIZED.lower() in lines[1]
+    assert lines[2].strip() == f"{strings.BET_NUMBER.format(number=2)}: {strings.NO_HITS}"
+    assert lines[3] == f"Sozinha: {strings.NO_HITS}"
+
+
+def test_check_all_never_reports_a_non_result_as_no_hits(qtbot, window, service):
+    from lotoconfere.gui.window import check_all_report
+
+    # The run reaches past the latest contest, and the old Dia de Sorte bet has
+    # no month: neither may read as "Nenhum acerto".
+    service.store.save_batch("Futuro", (Bet(game="megasena", numbers=OTHER),), LATEST + 1, 2)
+    service.store.save_batch("Antiga", (Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25)),))
+    report = check_all_report(service.check_all())
+    assert strings.NO_HITS not in report
+    assert strings.RUN_PENDING.format(count=2) in report
+    assert f"Antiga: {strings.UNAVAILABLE}: " in report
 
 
 # --- the mirror bet -------------------------------------------------------------------
@@ -335,17 +534,19 @@ def test_a_saved_dia_de_sorte_bet_comes_back_with_its_month(qtbot, window, monke
 
 def test_lotomania_offers_the_mirror_bet_and_others_do_not(qtbot, window):
     window.open_game("lotomania")
-    assert window.stack.currentWidget().mirror.isVisibleTo(window.stack.currentWidget())
+    assert window.stack.currentWidget().lines[0].mirror.isVisibleTo(window.stack.currentWidget())
     window.open_game("megasena")
-    assert not window.stack.currentWidget().mirror.isVisibleTo(window.stack.currentWidget())
+    assert (
+        not window.stack.currentWidget().lines[0].mirror.isVisibleTo(window.stack.currentWidget())
+    )
 
 
 def test_the_mirror_button_swaps_in_the_other_fifty(qtbot, window):
     window.open_game("lotomania")
     screen = window.stack.currentWidget()
     pick(screen, range(50))
-    screen._mirror()
-    assert screen.picker.bet().numbers == tuple(range(50, 100))
+    screen._mirror(screen.lines[0])
+    assert screen.lines[0].bet().numbers == tuple(range(50, 100))
 
 
 def test_mirroring_an_unplayable_bet_complains(qtbot, window, monkeypatch):
@@ -354,7 +555,7 @@ def test_mirroring_an_unplayable_bet_complains(qtbot, window, monkeypatch):
     complaints: list[str] = []
     monkeypatch.setattr(screen, "_complain", complaints.append)
     pick(screen, (1, 2, 3))
-    screen._mirror()
+    screen._mirror(screen.lines[0])
     assert complaints
 
 
@@ -362,12 +563,12 @@ def test_mirroring_an_unplayable_bet_complains(qtbot, window, monkeypatch):
 
 
 def test_bets_survive_an_export_and_an_import(qtbot, window, service, tmp_path):
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     path = tmp_path / "apostas.json"
     window.export_saved(str(path))
-    service.store.delete_bet(next(iter(service.store.saved_bets())).id)
+    service.store.delete_batch(next(iter(service.store.saved_batches())).id)
     assert window.import_saved(str(path)) == 1
-    assert [s.name for s in service.store.saved_bets()] == ["Do trabalho"]
+    assert [s.name for s in service.store.saved_batches()] == ["Do trabalho"]
 
 
 def test_importing_something_that_is_not_a_bet_file_complains(qtbot, window, tmp_path, monkeypatch):
@@ -395,7 +596,7 @@ def test_check_all_reports_every_saved_bet(qtbot, window, service, monkeypatch):
 
     seen = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: seen.append(a[-1]))
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.check_everything()
     assert "Do trabalho" in seen[0]
 
@@ -479,12 +680,12 @@ def test_the_run_summary_counts_only_what_was_checked():
 
 
 def test_deleting_with_nothing_selected_does_nothing(qtbot, window, service):
-    service.store.save_bet("Do trabalho", Bet(game="megasena", numbers=DRAWN))
+    service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.open_game("megasena")
     screen = window.stack.currentWidget()
     screen.saved.setCurrentIndex(0)  # the "new bet" entry
     screen._delete()
-    assert len(list(service.store.saved_bets())) == 1
+    assert len(list(service.store.saved_batches())) == 1
 
 
 def test_cancelling_when_nothing_is_running_is_harmless(qtbot, window):
@@ -555,9 +756,9 @@ def test_producing_a_single_contest_yields_one_answer(qtbot, window):
     window.open_game("megasena")
     screen = window.screens["megasena"]
     bet = Bet(game="megasena", numbers=DRAWN)
-    produced = list(screen._produce(bet, None, None, threading.Event()))
+    produced = list(screen._produce([bet], None, None, threading.Event()))
     assert len(produced) == 1
-    assert produced[0].outcome is Outcome.CHECKED
+    assert produced[0].answer.outcome is Outcome.CHECKED
 
 
 def test_producing_a_run_yields_one_answer_per_contest(qtbot, window):
@@ -566,8 +767,8 @@ def test_producing_a_run_yields_one_answer_per_contest(qtbot, window):
     window.open_game("megasena")
     screen = window.screens["megasena"]
     bet = Bet(game="megasena", numbers=DRAWN)
-    produced = list(screen._produce(bet, 3060, 3, threading.Event()))
-    assert [a.contest for a in produced] == [3060, 3061, 3062]
+    produced = list(screen._produce([bet], 3060, 3, threading.Event()))
+    assert [a.answer.contest for a in produced] == [3060, 3061, 3062]
 
 
 def test_producing_with_nothing_known_yet_yields_an_unavailable(qtbot, tmp_path):
@@ -591,20 +792,20 @@ def test_producing_with_nothing_known_yet_yields_an_unavailable(qtbot, tmp_path)
         made.open_game("megasena")
         screen = made.screens["megasena"]
         bet = Bet(game="megasena", numbers=DRAWN)
-        produced = list(screen._produce(bet, None, None, threading.Event()))
-        assert produced[0].outcome is Outcome.UNAVAILABLE
-        assert produced[0].reason == strings.NEVER_UPDATED
+        produced = list(screen._produce([bet], None, None, threading.Event()))
+        assert produced[0].answer.outcome is Outcome.UNAVAILABLE
+        assert produced[0].answer.reason == strings.NEVER_UPDATED
 
 
 def test_the_worker_emits_each_answer_it_is_given(qtbot):
     from lotoconfere.gui.worker import RunWorker
 
     answers = [
-        ContestResult(contest=1, outcome=Outcome.PENDING),
-        ContestResult(contest=2, outcome=Outcome.PENDING),
+        BetAnswer(position=0, answer=ContestResult(contest=1, outcome=Outcome.PENDING)),
+        BetAnswer(position=1, answer=ContestResult(contest=1, outcome=Outcome.PENDING)),
     ]
     worker = RunWorker(lambda: iter(answers))
-    seen: list[ContestResult] = []
+    seen: list[BetAnswer] = []
     worker.found.connect(seen.append)
     finished: list[int] = []
     worker.finished.connect(lambda: finished.append(1))

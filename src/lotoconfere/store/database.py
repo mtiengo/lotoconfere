@@ -1,5 +1,8 @@
 """One SQLite file in the user's data directory: the result cache and saved bets.
 
+Saved bets are kept in batches: a name, a game and an optional teimosinha run,
+holding one or more bets that are each edited, removed or re-saved on their own.
+
 Parameterised queries only, everywhere, without exception.
 
 Caching rule: a drawn contest whose prize table has been published never changes,
@@ -11,7 +14,7 @@ run fetches it again instead of showing an old blank where a prize belongs.
 import json
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -38,9 +41,12 @@ NO = "nao"
 #   2: cached_draw.fetched_at, so the app can say when its offline copy is from.
 #   3: saved_bet.extra, .clovers and .columns. Before this a saved bet kept only
 #      its numbers, so a month, team, trevos or Super Sete columns were lost.
-SCHEMA_VERSION = 3
+#   4: saved_batch and batch_bet replace saved_bet; each old bet becomes a
+#      batch of one, keeping its id.
+SCHEMA_VERSION = 4
 VERSION_WITH_FETCH_TIME = 2
 VERSION_WITH_FULL_BETS = 3
+VERSION_WITH_BATCHES = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cached_draw (
@@ -65,16 +71,23 @@ CREATE TABLE IF NOT EXISTS setting (
     value TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS saved_bet (
+CREATE TABLE IF NOT EXISTS saved_batch (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL,
     game         TEXT    NOT NULL,
+    run_start    INTEGER,
+    run_count    INTEGER
+);
+
+-- The game lives on the batch, so a batch cannot hold bets of two games.
+CREATE TABLE IF NOT EXISTS batch_bet (
+    batch_id     INTEGER NOT NULL,
+    position     INTEGER NOT NULL,
     numbers      TEXT    NOT NULL,
     extra        TEXT,
     clovers      TEXT    NOT NULL DEFAULT '[]',
     columns      TEXT    NOT NULL DEFAULT '[]',
-    run_start    INTEGER,
-    run_count    INTEGER
+    PRIMARY KEY (batch_id, position)
 );
 """
 
@@ -119,7 +132,7 @@ def decode_prizes(raw: str | None) -> tuple[PrizeTier, ...] | None:
 
 
 def _encode_bet(bet: Bet) -> tuple[str, str | None, str, str]:
-    """A bet's marks as the saved_bet columns hold them, in column order."""
+    """A bet's marks as the batch_bet columns hold them, in column order."""
     return (
         json.dumps(list(bet.numbers)),
         bet.extra,
@@ -128,13 +141,32 @@ def _encode_bet(bet: Bet) -> tuple[str, str | None, str, str]:
     )
 
 
+def _decode_bet(game: str, row: sqlite3.Row) -> Bet:
+    return Bet(
+        game=game,
+        numbers=tuple(json.loads(row["numbers"])),
+        extra=None if row["extra"] is None else str(row["extra"]),
+        clovers=tuple(json.loads(row["clovers"])),
+        columns=tuple(tuple(column) for column in json.loads(row["columns"])),
+    )
+
+
+def _game_of(bets: Sequence[Bet]) -> str:
+    """The one game a batch is for. An empty or mixed batch is a caller's bug."""
+    games = {bet.game for bet in bets}
+    if len(games) != 1:
+        raise ValueError("a batch holds at least one bet, all of the same game")
+    return games.pop()
+
+
 @dataclass(frozen=True)
-class SavedBet:
-    """A bet someone named and kept, with its teimosinha run if it has one."""
+class SavedBatch:
+    """Bets someone named and kept together, with a shared teimosinha run if any."""
 
     id: int
     name: str
-    bet: Bet
+    game: str
+    bets: tuple[Bet, ...]
     run_start: int | None = None
     run_count: int | None = None
 
@@ -186,16 +218,42 @@ class Store:
             # cannot be recovered, and such a bet fails validation when checked
             # rather than being checked without its month or trevos.
             columns = {row["name"] for row in cursor.execute("PRAGMA table_info(saved_bet)")}
-            if "extra" not in columns:
+            # A version 1 file may never have created the table at all.
+            if columns and "extra" not in columns:
                 cursor.execute("ALTER TABLE saved_bet ADD COLUMN extra TEXT")
-            if "clovers" not in columns:
+            if columns and "clovers" not in columns:
                 cursor.execute(
                     "ALTER TABLE saved_bet ADD COLUMN clovers TEXT NOT NULL DEFAULT '[]'"
                 )
-            if "columns" not in columns:
+            if columns and "columns" not in columns:
                 cursor.execute(
                     "ALTER TABLE saved_bet ADD COLUMN columns TEXT NOT NULL DEFAULT '[]'"
                 )
+        if found and found < VERSION_WITH_BATCHES:
+            Store._move_bets_into_batches(cursor)
+
+    @staticmethod
+    def _move_bets_into_batches(cursor: sqlite3.Cursor) -> None:
+        """Each old saved bet becomes a batch of one.
+
+        INSERT OR IGNORE so that a file whose migration died before the version
+        bump can run it again without duplicating anything.
+        """
+        if not list(cursor.execute("PRAGMA table_info(saved_bet)")):
+            return
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO saved_batch (id, name, game, run_start, run_count)
+            SELECT id, name, game, run_start, run_count FROM saved_bet
+            """
+        )
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO batch_bet (batch_id, position, numbers, extra, clovers, columns)
+            SELECT id, 0, numbers, extra, clovers, columns FROM saved_bet
+            """
+        )
+        cursor.execute("DROP TABLE saved_bet")
 
     def _read(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
         """One read, serialised like every other statement."""
@@ -342,61 +400,74 @@ class Store:
 
     # --- saved bets ------------------------------------------------------------
 
-    def save_bet(
+    def save_batch(
         self,
         name: str,
-        bet: Bet,
+        bets: Sequence[Bet],
         run_start: int | None = None,
         run_count: int | None = None,
     ) -> int:
-        """Store a named bet, optionally with an active teimosinha run."""
+        """Store named bets of one game, optionally with a shared teimosinha run."""
+        game = _game_of(bets)
         with self._lock, self._connection as connection:
             cursor = connection.execute(
-                """
-                INSERT INTO saved_bet
-                    (name, game, numbers, extra, clovers, columns, run_start, run_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (name, bet.game, *_encode_bet(bet), run_start, run_count),
+                "INSERT INTO saved_batch (name, game, run_start, run_count) VALUES (?, ?, ?, ?)",
+                (name, game, run_start, run_count),
             )
-        return int(cursor.lastrowid or 0)
+            batch_id = int(cursor.lastrowid or 0)
+            self._write_bets(connection, batch_id, bets)
+        return batch_id
 
-    def update_bet(
+    def update_batch(
         self,
-        bet_id: int,
+        batch_id: int,
         name: str,
-        bet: Bet,
+        bets: Sequence[Bet],
         run_start: int | None = None,
         run_count: int | None = None,
     ) -> None:
+        """Replace a batch's name, run and bets in one transaction."""
+        game = _game_of(bets)
         with self._lock, self._connection as connection:
             connection.execute(
                 """
-                UPDATE saved_bet
-                   SET name = ?, game = ?, numbers = ?, extra = ?, clovers = ?, columns = ?,
-                       run_start = ?, run_count = ?
+                UPDATE saved_batch SET name = ?, game = ?, run_start = ?, run_count = ?
                  WHERE id = ?
                 """,
-                (name, bet.game, *_encode_bet(bet), run_start, run_count, bet_id),
+                (name, game, run_start, run_count, batch_id),
             )
+            connection.execute("DELETE FROM batch_bet WHERE batch_id = ?", (batch_id,))
+            self._write_bets(connection, batch_id, bets)
 
-    def delete_bet(self, bet_id: int) -> None:
+    @staticmethod
+    def _write_bets(connection: sqlite3.Connection, batch_id: int, bets: Sequence[Bet]) -> None:
+        connection.executemany(
+            """
+            INSERT INTO batch_bet (batch_id, position, numbers, extra, clovers, columns)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [(batch_id, position, *_encode_bet(bet)) for position, bet in enumerate(bets)],
+        )
+
+    def delete_batch(self, batch_id: int) -> None:
         with self._lock, self._connection as connection:
-            connection.execute("DELETE FROM saved_bet WHERE id = ?", (bet_id,))
+            connection.execute("DELETE FROM batch_bet WHERE batch_id = ?", (batch_id,))
+            connection.execute("DELETE FROM saved_batch WHERE id = ?", (batch_id,))
 
-    def saved_bets(self) -> Iterator[SavedBet]:
-        """Every saved bet, oldest first."""
-        for row in self._read("SELECT * FROM saved_bet ORDER BY id").fetchall():
-            yield SavedBet(
-                id=int(row["id"]),
-                name=str(row["name"]),
-                bet=Bet(
-                    game=str(row["game"]),
-                    numbers=tuple(json.loads(row["numbers"])),
-                    extra=None if row["extra"] is None else str(row["extra"]),
-                    clovers=tuple(json.loads(row["clovers"])),
-                    columns=tuple(tuple(column) for column in json.loads(row["columns"])),
-                ),
-                run_start=None if row["run_start"] is None else int(row["run_start"]),
-                run_count=None if row["run_count"] is None else int(row["run_count"]),
+    def saved_batches(self) -> Iterator[SavedBatch]:
+        """Every saved batch, oldest first, each with its bets in the order entered."""
+        batches = self._read("SELECT * FROM saved_batch ORDER BY id").fetchall()
+        rows = self._read("SELECT * FROM batch_bet ORDER BY batch_id, position").fetchall()
+        bets: dict[int, list[sqlite3.Row]] = {}
+        for row in rows:
+            bets.setdefault(int(row["batch_id"]), []).append(row)
+        for batch in batches:
+            game = str(batch["game"])
+            yield SavedBatch(
+                id=int(batch["id"]),
+                name=str(batch["name"]),
+                game=game,
+                bets=tuple(_decode_bet(game, row) for row in bets.get(int(batch["id"]), [])),
+                run_start=None if batch["run_start"] is None else int(batch["run_start"]),
+                run_count=None if batch["run_count"] is None else int(batch["run_count"]),
             )
