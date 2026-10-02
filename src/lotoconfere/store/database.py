@@ -36,8 +36,11 @@ NO = "nao"
 # A file from the future is refused rather than opened hopefully; an older one
 # is migrated in _prepare.
 #   2: cached_draw.fetched_at, so the app can say when its offline copy is from.
-SCHEMA_VERSION = 2
+#   3: saved_bet.extra, .clovers and .columns. Before this a saved bet kept only
+#      its numbers, so a month, team, trevos or Super Sete columns were lost.
+SCHEMA_VERSION = 3
 VERSION_WITH_FETCH_TIME = 2
+VERSION_WITH_FULL_BETS = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS cached_draw (
@@ -67,6 +70,9 @@ CREATE TABLE IF NOT EXISTS saved_bet (
     name         TEXT    NOT NULL,
     game         TEXT    NOT NULL,
     numbers      TEXT    NOT NULL,
+    extra        TEXT,
+    clovers      TEXT    NOT NULL DEFAULT '[]',
+    columns      TEXT    NOT NULL DEFAULT '[]',
     run_start    INTEGER,
     run_count    INTEGER
 );
@@ -109,6 +115,16 @@ def decode_prizes(raw: str | None) -> tuple[PrizeTier, ...] | None:
             amount=Decimal(str(row["amount"])),
         )
         for row in json.loads(raw)
+    )
+
+
+def _encode_bet(bet: Bet) -> tuple[str, str | None, str, str]:
+    """A bet's marks as the saved_bet columns hold them, in column order."""
+    return (
+        json.dumps(list(bet.numbers)),
+        bet.extra,
+        json.dumps(list(bet.clovers)),
+        json.dumps([list(column) for column in bet.columns]),
     )
 
 
@@ -165,6 +181,21 @@ class Store:
             columns = {row["name"] for row in cursor.execute("PRAGMA table_info(cached_draw)")}
             if "fetched_at" not in columns:
                 cursor.execute("ALTER TABLE cached_draw ADD COLUMN fetched_at TEXT")
+        if found and found < VERSION_WITH_FULL_BETS:
+            # Rows saved before this keep what they had. What was never stored
+            # cannot be recovered, and such a bet fails validation when checked
+            # rather than being checked without its month or trevos.
+            columns = {row["name"] for row in cursor.execute("PRAGMA table_info(saved_bet)")}
+            if "extra" not in columns:
+                cursor.execute("ALTER TABLE saved_bet ADD COLUMN extra TEXT")
+            if "clovers" not in columns:
+                cursor.execute(
+                    "ALTER TABLE saved_bet ADD COLUMN clovers TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "columns" not in columns:
+                cursor.execute(
+                    "ALTER TABLE saved_bet ADD COLUMN columns TEXT NOT NULL DEFAULT '[]'"
+                )
 
     def _read(self, sql: str, parameters: tuple[object, ...] = ()) -> sqlite3.Cursor:
         """One read, serialised like every other statement."""
@@ -322,10 +353,11 @@ class Store:
         with self._lock, self._connection as connection:
             cursor = connection.execute(
                 """
-                INSERT INTO saved_bet (name, game, numbers, run_start, run_count)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO saved_bet
+                    (name, game, numbers, extra, clovers, columns, run_start, run_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (name, bet.game, json.dumps(list(bet.numbers)), run_start, run_count),
+                (name, bet.game, *_encode_bet(bet), run_start, run_count),
             )
         return int(cursor.lastrowid or 0)
 
@@ -341,10 +373,11 @@ class Store:
             connection.execute(
                 """
                 UPDATE saved_bet
-                   SET name = ?, game = ?, numbers = ?, run_start = ?, run_count = ?
+                   SET name = ?, game = ?, numbers = ?, extra = ?, clovers = ?, columns = ?,
+                       run_start = ?, run_count = ?
                  WHERE id = ?
                 """,
-                (name, bet.game, json.dumps(list(bet.numbers)), run_start, run_count, bet_id),
+                (name, bet.game, *_encode_bet(bet), run_start, run_count, bet_id),
             )
 
     def delete_bet(self, bet_id: int) -> None:
@@ -357,7 +390,13 @@ class Store:
             yield SavedBet(
                 id=int(row["id"]),
                 name=str(row["name"]),
-                bet=Bet(game=str(row["game"]), numbers=tuple(json.loads(row["numbers"]))),
+                bet=Bet(
+                    game=str(row["game"]),
+                    numbers=tuple(json.loads(row["numbers"])),
+                    extra=None if row["extra"] is None else str(row["extra"]),
+                    clovers=tuple(json.loads(row["clovers"])),
+                    columns=tuple(tuple(column) for column in json.loads(row["columns"])),
+                ),
                 run_start=None if row["run_start"] is None else int(row["run_start"]),
                 run_count=None if row["run_count"] is None else int(row["run_count"]),
             )

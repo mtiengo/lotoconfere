@@ -142,6 +142,57 @@ def test_a_saved_bet_can_be_edited(store):
     assert (saved.run_start, saved.run_count) == (3070, 4)
 
 
+# Every field a bet can carry, one game per shape that has more than numbers.
+FULL_BETS = [
+    Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25), extra="Setembro"),
+    Bet(game="timemania", numbers=(2, 4, 6, 8, 10, 12, 14, 16, 18, 20), extra="Flamengo/RJ"),
+    Bet(game="maismilionaria", numbers=(3, 7, 11, 19, 23, 31), clovers=(2, 5)),
+    Bet(game="supersete", columns=((1,), (2,), (3,), (4,), (5,), (6,), (7, 8))),
+]
+
+
+@pytest.mark.parametrize("bet", FULL_BETS, ids=lambda bet: bet.game)
+def test_a_saved_bet_keeps_every_field_it_was_saved_with(store, bet):
+    # A Dia de Sorte bet saved without its month is checked as a different bet.
+    store.save_bet("Completa", bet)
+    assert next(iter(store.saved_bets())).bet == bet
+
+
+@pytest.mark.parametrize("bet", FULL_BETS, ids=lambda bet: bet.game)
+def test_editing_a_saved_bet_keeps_every_field(store, bet):
+    bet_id = store.save_bet("Antiga", Bet(game=bet.game))
+    store.update_bet(bet_id, "Completa", bet)
+    assert next(iter(store.saved_bets())).bet == bet
+
+
+def test_a_version_two_file_keeps_its_saved_bets(tmp_path):
+    # Bets saved before the extra fields existed open with those fields empty,
+    # which validation then refuses -- they are never filled in by a guess.
+    path = tmp_path / "v2.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE saved_bet (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, game TEXT NOT NULL,
+            numbers TEXT NOT NULL, run_start INTEGER, run_count INTEGER
+        );
+        INSERT INTO saved_bet (name, game, numbers, run_start, run_count) VALUES
+            ('Antiga', 'diadesorte', '[1,5,9,13,17,21,25]', 3100, 4);
+        PRAGMA user_version = 2;
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    with Store(path) as migrated:
+        kept = next(iter(migrated.saved_bets()))
+        assert kept.name == "Antiga"
+        assert kept.bet == Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25))
+        assert (kept.run_start, kept.run_count) == (3100, 4)
+        migrated.save_bet("Nova", FULL_BETS[0])
+        assert list(migrated.saved_bets())[1].bet == FULL_BETS[0]
+
+
 def test_a_name_with_a_quote_in_it_is_just_a_name(store):
     # Parameterised queries only; this is the test that says so out loud.
     nasty = "'; DROP TABLE saved_bet; --"

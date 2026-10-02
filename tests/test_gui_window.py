@@ -314,6 +314,22 @@ def test_editing_a_saved_bet_keeps_one_entry(qtbot, window, monkeypatch, service
     assert saved[0].bet.numbers == (1, 2, 3, 4, 5, 6)
 
 
+def test_a_saved_dia_de_sorte_bet_comes_back_with_its_month(qtbot, window, monkeypatch, service):
+    from PySide6.QtWidgets import QInputDialog
+
+    window.open_game("diadesorte")
+    screen = window.stack.currentWidget()
+    month = screen.rules.extra_options[-1]
+    screen.picker.load(Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25), extra=month))
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Do mês", True))
+    screen._save()
+
+    screen.picker.clear()
+    screen.saved.setCurrentIndex(1)
+    assert screen.picker.bet().extra == month
+    assert next(iter(service.store.saved_bets())).bet.extra == month
+
+
 # --- the mirror bet -------------------------------------------------------------------
 
 
