@@ -72,6 +72,13 @@ markers = [
     "live: hits the real Caixa or mirror endpoint; run by hand, never in CI",
 ]
 qt_api = "pyside6"
+# A leaked file or connection fails the run instead of scrolling past as a warning.
+# Most leaks are reported from __del__ during garbage collection, where pytest can
+# only catch the error as "unraisable", so that warning has to be an error too.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.coverage.run]
 source = ["lotoconfere"]
