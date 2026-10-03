@@ -234,9 +234,24 @@ class GameScreen(QWidget):
         self.contest = QLineEdit()
         self.contest.setFixedWidth(90)
         self.contest.setPlaceholderText(strings.LATEST_CONTEST)
+        # The spin box's own arrows are hidden: under the Windows 11 style the up
+        # arrow sat over the number, where the text field took most of its clicks.
         self.count = QSpinBox()
         self.count.setRange(1, 100)
-        self.count.setFixedWidth(70)
+        self.count.setFixedWidth(64)
+        self.count.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.fewer = QPushButton()
+        self.fewer.setIcon(icon("step-down", self.palette_tokens.text))
+        self.fewer.setAccessibleName(strings.FEWER_CONTESTS)
+        self.fewer.setToolTip(strings.FEWER_CONTESTS)
+        self.fewer.clicked.connect(self.count.stepDown)
+        self.more = QPushButton()
+        self.more.setIcon(icon("step-up", self.palette_tokens.text))
+        self.more.setAccessibleName(strings.MORE_CONTESTS)
+        self.more.setToolTip(strings.MORE_CONTESTS)
+        self.more.clicked.connect(self.count.stepUp)
+        self.count.valueChanged.connect(self._count_limits)
+        self._count_limits()
         self.go = QPushButton(strings.CHECK)
         self.go.setObjectName("go")
         self.go.clicked.connect(self.start)
@@ -283,6 +298,8 @@ class GameScreen(QWidget):
                 self.contest,
                 label(strings.TEIMOSINHA, "label"),
                 self.count,
+                self.fewer,
+                self.more,
                 label(strings.CONTESTS_WORD, "muted"),
                 self.go,
                 self.stop,
@@ -329,6 +346,10 @@ class GameScreen(QWidget):
             line.remove.setVisible(len(self.lines) > 1)
             line.add.setVisible(line is self.lines[-1])
         self._bets_changed()
+
+    def _count_limits(self) -> None:
+        self.fewer.setEnabled(self.count.value() > self.count.minimum())
+        self.more.setEnabled(self.count.value() < self.count.maximum())
 
     def _bets_changed(self) -> None:
         self.go.setEnabled(all(line.playable() for line in self.lines))

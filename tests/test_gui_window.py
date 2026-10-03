@@ -480,6 +480,21 @@ def test_each_bet_gets_its_own_results_under_its_own_heading(qtbot, window):
     assert shown.count(strings.NOT_DRAWN) == 2
 
 
+def test_the_teimosinha_arrows_step_the_count_and_stop_at_its_limits(qtbot, window):
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    assert screen.count.value() == 1
+    assert not screen.fewer.isEnabled()
+    screen.more.click()
+    screen.more.click()
+    assert screen.count.value() == 3
+    screen.fewer.click()
+    assert screen.count.value() == 2
+    assert screen.fewer.isEnabled()
+    screen.count.setValue(screen.count.maximum())
+    assert not screen.more.isEnabled()
+
+
 def test_the_first_result_is_scrolled_into_view(qtbot, window):
     # Two volantes fill the window; the results must not be left below them.
     window.resize(820, 780)
