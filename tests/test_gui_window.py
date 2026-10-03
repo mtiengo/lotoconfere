@@ -371,6 +371,19 @@ def test_the_trash_can_removes_its_own_line_and_renumbers(qtbot, window):
     assert screen.lines[1].heading.text() == strings.BET_NUMBER.format(number=2)
 
 
+def test_the_trash_can_is_drawn_in_the_text_colour(qtbot, window):
+    # Qt paints an SVG's currentColor black, which vanishes on the dark scheme.
+    window.open_game("megasena")
+    image = window.stack.currentWidget().lines[0].remove.icon().pixmap(16, 16).toImage()
+    solid = {
+        image.pixelColor(x, y).name()
+        for x in range(image.width())
+        for y in range(image.height())
+        if image.pixelColor(x, y).alpha() == 255
+    }
+    assert solid == {LIGHT.text}
+
+
 def test_the_last_line_cannot_be_removed(qtbot, window):
     window.open_game("megasena")
     screen = window.stack.currentWidget()

@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedWidget,
-    QStyle,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -42,7 +41,7 @@ from lotoconfere.core.models import Bet
 from lotoconfere.core.rules import GAMES, GameRules, mirror_bet, rules_for, validate_bet
 from lotoconfere.gui import results, strings
 from lotoconfere.gui.pickers import picker_for
-from lotoconfere.gui.theme import Palette, game_colour
+from lotoconfere.gui.theme import Palette, game_colour, icon
 from lotoconfere.gui.widgets import Dot, label, pane, row, rule
 from lotoconfere.gui.worker import Job
 from lotoconfere.service import BetAnswer, ContestResult, SavedBetOutcome, Service
@@ -155,7 +154,7 @@ class BetLine(QWidget):
         # Icons alone are not enough to say what a button does, so both carry
         # their action in words for screen readers and as a tooltip.
         self.remove = QPushButton()
-        self.remove.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.remove.setIcon(icon("trash", palette.text))
         self.remove.setAccessibleName(strings.REMOVE_BET)
         self.remove.setToolTip(strings.REMOVE_BET)
         self.add = QPushButton("+")

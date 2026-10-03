@@ -18,10 +18,15 @@ Rules this file exists to keep:
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase, QGuiApplication
+from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QFontDatabase, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 
 FONTS = Path(__file__).parent / "fonts"
+ICONS = Path(__file__).parent / "icons"
+# Pixel sizes of a 16px icon at 100% to 200% display scaling. Each is drawn from
+# the SVG, so the 1px grid stays sharp instead of being resampled from another size.
+ICON_SIZES = (16, 20, 24, 32)
 BODY = "Inter"
 NUMERIC = "JetBrains Mono"
 
@@ -140,6 +145,23 @@ def game_colour(game: str, palette: Palette) -> str:
         return palette.accent
     light, dark = pair
     return dark if palette is DARK else light
+
+
+def icon(name: str, colour: str) -> QIcon:
+    """An SVG from the icons folder, drawn in one palette colour."""
+    # Qt paints currentColor as black whatever the scheme, so the colour goes into
+    # the SVG text before Qt reads it.
+    svg = (ICONS / f"{name}.svg").read_text(encoding="utf-8").replace("currentColor", colour)
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    drawn = QIcon()
+    for size in ICON_SIZES:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        drawn.addPixmap(pixmap)
+    return drawn
 
 
 def stylesheet(p: Palette) -> str:
