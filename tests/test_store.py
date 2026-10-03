@@ -1,6 +1,8 @@
 """The local database: what it keeps, what it refetches, and what it refuses."""
 
+import gc
 import sqlite3
+import warnings
 from datetime import date
 from decimal import Decimal
 
@@ -105,6 +107,20 @@ def test_a_file_from_a_newer_version_is_refused_not_opened(tmp_path):
     connection.close()
     with pytest.raises(StoreError, match="versão mais nova"):
         Store(path)
+
+
+def test_a_refused_file_is_not_left_open(tmp_path):
+    # An open handle on Windows keeps the file locked until the collector runs.
+    path = tmp_path / "future.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    connection.close()
+    with pytest.raises(StoreError):
+        Store(path)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        gc.collect()
+    assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
 
 
 # --- saved bets -------------------------------------------------------------

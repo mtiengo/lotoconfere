@@ -189,7 +189,12 @@ class Store:
         self._connection = sqlite3.connect(self.path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.Lock()
-        self._prepare()
+        try:
+            self._prepare()
+        except BaseException:
+            # A refused file must not stay open: on Windows the handle locks it.
+            self._connection.close()
+            raise
 
     def _prepare(self) -> None:
         with self._lock, closing(self._connection.cursor()) as cursor:
