@@ -5,6 +5,20 @@ Todas as mudanças importantes deste projeto são anotadas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/), e as versões seguem
 o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.1.0-rc.4] - 2026-10-03
+
+### Alterado
+
+- Com várias apostas, os resultados de cada uma vêm separados por uma linha, com o título maior e
+  os números da aposta ao lado.
+- "Conferir todas as apostas salvas" mostra os resultados no mesmo formato, com os números de cada
+  aposta.
+
+### Corrigido
+
+- A teimosinha ganhou botões próprios para aumentar e diminuir. A seta de aumentar ficava por cima
+  do número e quase não respondia ao clique.
+
 ## [0.1.0-rc.3] - 2026-10-03
 
 ### Adicionado
