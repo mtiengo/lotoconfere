@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
+    QLabel,
     QLayout,
     QLineEdit,
     QMainWindow,
@@ -62,19 +63,61 @@ def clear(box: QVBoxLayout) -> None:
             widget.deleteLater()
 
 
-def check_all_report(outcomes: list[SavedBetOutcome]) -> str:
-    """One line per bet, under its batch's name when the batch holds several."""
-    lines: list[str] = []
+def numbers_beside(heading: QLabel, bet: Bet) -> QHBoxLayout:
+    """A heading with the bet's numbers next to it, so it matches the paper ticket."""
+    numbers = label(strings.bet_numbers(bet), "numbers")
+    numbers.setWordWrap(True)  # a Lotomania bet is fifty numbers long
+    box = QHBoxLayout()
+    box.setSpacing(14)
+    box.addWidget(heading)
+    box.addWidget(numbers, stretch=1)
+    return box
+
+
+def bet_heading(position: int, bet: Bet, palette: Palette) -> QWidget:
+    """Where one bet's results start: a hairline and a heading above its contests."""
+    # The contests under it use h2, so the bet's own heading has to outrank them.
+    holder = QWidget()
+    box = QVBoxLayout(holder)
+    box.setContentsMargins(0, 0 if position == 0 else 18, 0, 2)
+    box.setSpacing(12)
+    if position > 0:
+        box.addWidget(rule(palette))
+    heading = label(strings.BET_NUMBER.format(number=position + 1), "section")
+    box.addLayout(numbers_beside(heading, bet))
+    return holder
+
+
+def check_all_view(outcomes: list[SavedBetOutcome], palette: Palette) -> QWidget:
+    """Every saved bet's outcome, ruled off by batch the way the game screen rules bets."""
+    holder = QWidget()
+    box = QVBoxLayout(holder)
+    box.setSpacing(8)
     for outcome in outcomes:
-        state = results.saved_outcome_line(outcome)
-        if len(outcome.saved.bets) == 1:
-            lines.append(f"{outcome.saved.name}: {state}")
-            continue
         if outcome.position == 0:
-            lines.append(outcome.saved.name)
-        heading = strings.BET_NUMBER.format(number=outcome.position + 1)
-        lines.append(f"    {heading}: {state}")
-    return "\n".join(lines)
+            if box.count():
+                box.addSpacing(10)
+                box.addWidget(rule(palette))
+                box.addSpacing(4)
+            # The name may come from an imported file: shown as text, never as markup.
+            name = label(outcome.saved.name, "section")
+            name.setTextFormat(Qt.TextFormat.PlainText)
+            box.addWidget(name)
+        bet = outcome.saved.bets[outcome.position]
+        if outcome.position > 0:
+            box.addSpacing(6)
+        if len(outcome.saved.bets) > 1:
+            heading = label(strings.BET_NUMBER.format(number=outcome.position + 1), "h2")
+            box.addLayout(numbers_beside(heading, bet))
+        else:
+            numbers = label(strings.bet_numbers(bet), "numbers")
+            numbers.setWordWrap(True)
+            box.addWidget(numbers)
+        state = label(results.saved_outcome_line(outcome))
+        state.setTextFormat(Qt.TextFormat.PlainText)
+        box.addWidget(state)
+    box.addStretch(1)
+    return holder
 
 
 class Lobby(QWidget):
@@ -452,6 +495,8 @@ class GameScreen(QWidget):
             return
 
         bets = self.bets()
+        # The headings show what was checked, even if a line is edited mid-run.
+        self.run_bets = bets
         clear(self.results_box)
         self.checked: list[BetAnswer] = []
         self.go.setVisible(False)
@@ -496,7 +541,9 @@ class GameScreen(QWidget):
         self.checked.append(found)
         heading = None
         if first_of_bet and len(self.lines) > 1:
-            heading = label(strings.BET_NUMBER.format(number=found.position + 1), "h2")
+            heading = bet_heading(
+                found.position, self.run_bets[found.position], self.palette_tokens
+            )
             self.results_box.addWidget(heading)
         block = results.contest_block(found.answer, self.palette_tokens)
         self.results_box.addWidget(block)
@@ -554,6 +601,28 @@ class AboutBox(QDialog):
         )
         box.addWidget(text)
         close = QPushButton("Fechar")
+        close.clicked.connect(self.accept)
+        box.addLayout(row(close))
+
+
+class CheckAllBox(QDialog):
+    """Every saved bet checked at once, scrolling when there are many."""
+
+    def __init__(
+        self, outcomes: list[SavedBetOutcome], palette: Palette, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(strings.CHECK_ALL)
+        self.resize(620, 640)
+        self.view = check_all_view(outcomes, palette)
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setWidget(self.view)
+
+        box = QVBoxLayout(self)
+        box.setSpacing(10)
+        box.addWidget(scroller, stretch=1)
+        close = QPushButton(strings.CLOSE)
         close.clicked.connect(self.accept)
         box.addLayout(row(close))
 
@@ -621,7 +690,7 @@ class MainWindow(QMainWindow):
         if not outcomes:
             QMessageBox.information(self, strings.CHECK_ALL, strings.SAVED_COUNT_NONE)
             return
-        QMessageBox.information(self, strings.CHECK_ALL, check_all_report(outcomes))
+        CheckAllBox(outcomes, self.palette_tokens, self).exec()
 
     # --- import and export ---------------------------------------------------------
 

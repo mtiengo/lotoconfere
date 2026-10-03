@@ -480,6 +480,30 @@ def test_each_bet_gets_its_own_results_under_its_own_heading(qtbot, window):
     assert shown.count(strings.NOT_DRAWN) == 2
 
 
+def test_a_bet_heading_outranks_its_contests_and_is_ruled_off(qtbot, window):
+    from PySide6.QtWidgets import QFrame, QLabel
+
+    window.open_game("megasena")
+    screen = window.stack.currentWidget()
+    fill(screen, DRAWN, OTHER)
+    screen.contest.setText(str(LATEST))
+    screen.count.setValue(2)
+    screen.start()
+    qtbot.waitUntil(lambda: not screen.job.running(), timeout=8000)
+
+    first, second = (screen.results_box.itemAt(i).widget() for i in (0, 3))
+    for holder, number, marked in ((first, 1, DRAWN), (second, 2, OTHER)):
+        heading, numbers = holder.findChildren(QLabel)
+        assert heading.text() == strings.BET_NUMBER.format(number=number)
+        assert heading.objectName() == "section"
+        assert numbers.text() == " ".join(f"{n:02d}" for n in marked)
+    contest = screen.results_box.itemAt(1).widget().findChildren(QLabel)[0]
+    assert contest.objectName() == "h2"
+    # QLabel is a QFrame too, so the rule is the one that is nothing more.
+    rules = [[w for w in h.findChildren(QFrame) if type(w) is QFrame] for h in (first, second)]
+    assert [len(found) for found in rules] == [0, 1]
+
+
 def test_the_teimosinha_arrows_step_the_count_and_stop_at_its_limits(qtbot, window):
     window.open_game("megasena")
     screen = window.stack.currentWidget()
@@ -530,31 +554,57 @@ def test_the_lobby_counts_bets_not_batches(qtbot, service):
 
 
 def test_check_all_lists_every_bet_of_a_batch_under_its_name(qtbot, window, service):
-    from lotoconfere.gui.window import check_all_report
+    from lotoconfere.gui.window import check_all_view
 
     service.store.save_batch(
         "Dois volantes", tuple(Bet(game="megasena", numbers=n) for n in (DRAWN, OTHER))
     )
     service.store.save_batch("Sozinha", (Bet(game="megasena", numbers=OTHER),))
-    lines = check_all_report(service.check_all()).splitlines()
-    assert lines[0] == "Dois volantes"
-    assert lines[1].strip().startswith(strings.BET_NUMBER.format(number=1))
-    assert strings.PRIZED.lower() in lines[1]
-    assert lines[2].strip() == f"{strings.BET_NUMBER.format(number=2)}: {strings.NO_HITS}"
-    assert lines[3] == f"Sozinha: {strings.NO_HITS}"
+    view = check_all_view(service.check_all(), LIGHT)
+    qtbot.addWidget(view)
+    one = strings.BET_NUMBER.format(number=1)
+    two = strings.BET_NUMBER.format(number=2)
+    assert texts(view) == [
+        "Dois volantes",
+        one,
+        "05 09 11 17 18 38",
+        texts(view)[3],
+        two,
+        "01 02 03 04 06 07",
+        strings.NO_HITS,
+        "Sozinha",
+        "01 02 03 04 06 07",
+        strings.NO_HITS,
+    ]
+    assert strings.PRIZED.lower() in texts(view)[3]
+
+
+def test_a_batch_name_from_a_file_is_shown_as_text_not_markup(qtbot, service):
+    from lotoconfere.gui.window import check_all_view
+
+    service.store.save_batch("<b>Bolão</b>", (Bet(game="megasena", numbers=OTHER),))
+    view = check_all_view(service.check_all(), LIGHT)
+    qtbot.addWidget(view)
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel
+
+    (name,) = [w for w in view.findChildren(QLabel) if w.text() == "<b>Bolão</b>"]
+    assert name.textFormat() == Qt.TextFormat.PlainText
 
 
 def test_check_all_never_reports_a_non_result_as_no_hits(qtbot, window, service):
-    from lotoconfere.gui.window import check_all_report
+    from lotoconfere.gui.window import check_all_view
 
     # The run reaches past the latest contest, and the old Dia de Sorte bet has
     # no month: neither may read as "Nenhum acerto".
     service.store.save_batch("Futuro", (Bet(game="megasena", numbers=OTHER),), LATEST + 1, 2)
     service.store.save_batch("Antiga", (Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25)),))
-    report = check_all_report(service.check_all())
+    view = check_all_view(service.check_all(), LIGHT)
+    qtbot.addWidget(view)
+    report = "\n".join(texts(view))
     assert strings.NO_HITS not in report
     assert strings.RUN_PENDING.format(count=2) in report
-    assert f"Antiga: {strings.UNAVAILABLE}: " in report
+    assert f"Antiga\n01 05 09 13 17 21 25\n{strings.UNAVAILABLE}: " in report
 
 
 # --- the mirror bet -------------------------------------------------------------------
@@ -620,10 +670,10 @@ def test_exporting_where_it_cannot_write_complains(qtbot, window, tmp_path, monk
 
 
 def test_check_all_reports_every_saved_bet(qtbot, window, service, monkeypatch):
-    from PySide6.QtWidgets import QMessageBox
+    from lotoconfere.gui.window import CheckAllBox
 
     seen = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: seen.append(a[-1]))
+    monkeypatch.setattr(CheckAllBox, "exec", lambda box: seen.append(texts(box.view)))
     service.store.save_batch("Do trabalho", (Bet(game="megasena", numbers=DRAWN),))
     window.check_everything()
     assert "Do trabalho" in seen[0]

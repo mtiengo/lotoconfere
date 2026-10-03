@@ -171,6 +171,8 @@ def stylesheet(p: Palette) -> str:
     QLabel {{ background: transparent; }}
     QLabel#h1 {{ font-size: 24px; font-weight: 700; }}
     QLabel#h2 {{ font-size: 17px; font-weight: 700; }}
+    QLabel#section {{ font-size: 22px; font-weight: 800; }}
+    QLabel#numbers {{ color: {p.label}; font-family: "{NUMERIC}"; font-size: 15px; }}
     QLabel#label {{ color: {p.label}; font-size: 13px; font-weight: 600; }}
     QLabel#muted {{ color: {p.muted}; font-size: 13px; }}
     QLabel#warn {{ color: {p.warn}; font-size: 13px; font-weight: 600; }}

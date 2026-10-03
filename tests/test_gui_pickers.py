@@ -60,6 +60,29 @@ def test_dates_and_times_use_brazilian_order():
     assert strings.moment(datetime(2026, 9, 24, 21, 30, tzinfo=UTC)).startswith("24/09/2026")
 
 
+@pytest.mark.parametrize(
+    ("bet", "expected"),
+    [
+        (Bet(game="megasena", numbers=(5, 9, 11, 17, 18, 38)), "05 09 11 17 18 38"),
+        (Bet(game="lotomania", numbers=(0, 1, 99)), "00 01 99"),
+        (
+            Bet(game="maismilionaria", numbers=(1, 2, 3, 4, 5, 6), clovers=(1, 6)),
+            f"01 02 03 04 05 06 · {strings.CLOVERS} 1 6",
+        ),
+        (
+            Bet(game="diadesorte", numbers=(1, 5, 9, 13, 17, 21, 25), extra="Janeiro"),
+            "01 05 09 13 17 21 25 · Janeiro",
+        ),
+        (
+            Bet(game="supersete", columns=((0,), (1, 2), (3,), (4,), (5,), (6,), (9,))),
+            "0 | 1 2 | 3 | 4 | 5 | 6 | 9",
+        ),
+    ],
+)
+def test_a_bet_reads_the_way_it_was_marked(bet, expected):
+    assert strings.bet_numbers(bet) == expected
+
+
 def test_pending_and_unavailable_are_different_sentences():
     # The whole result-honesty rule, at the level of the words themselves.
     assert strings.NOT_DRAWN != strings.UNAVAILABLE

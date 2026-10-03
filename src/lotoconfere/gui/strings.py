@@ -18,6 +18,8 @@ not win when they did:
 from datetime import date, datetime
 from decimal import Decimal
 
+from lotoconfere.core.models import Bet
+
 APP_NAME = "LotoConfere"
 
 # --- lobby ----------------------------------------------------------------------
@@ -43,6 +45,7 @@ FEWER_CONTESTS = "Menos concursos"
 MORE_CONTESTS = "Mais concursos"
 CHECK = "Conferir"
 CANCEL = "Cancelar"
+CLOSE = "Fechar"
 CHECKING = "Consultando…"
 CHECKING_CONTEST = "Consultando o concurso {contest}…"
 CLEAR = "Limpar"
@@ -155,6 +158,19 @@ def hits(count: int) -> str:
     if count == 1:
         return ONE_HIT
     return HITS.format(count=count)
+
+
+def bet_numbers(bet: Bet) -> str:
+    """A bet as it was marked: 05 09 11, or Super Sete column by column."""
+    if bet.columns:
+        text = " | ".join(" ".join(str(digit) for digit in column) for column in bet.columns)
+    else:
+        text = " ".join(f"{number:02d}" for number in bet.numbers)
+    if bet.clovers:
+        text += f" · {CLOVERS} " + " ".join(str(clover) for clover in bet.clovers)
+    if bet.extra:
+        text += f" · {bet.extra}"
+    return text
 
 
 def saved_count(count: int) -> str:
