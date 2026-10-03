@@ -600,7 +600,7 @@ class AboutBox(QDialog):
             "\n\n".join(f"{n.component} — {n.licence}\n{n.path.name}" for n in notices.NOTICES)
         )
         box.addWidget(text)
-        close = QPushButton("Fechar")
+        close = QPushButton(strings.CLOSE)
         close.clicked.connect(self.accept)
         box.addLayout(row(close))
 
@@ -642,7 +642,7 @@ class SettingsBox(QDialog):
         box.setSpacing(10)
         box.addWidget(self.mirror)
         box.addWidget(label(strings.USE_MIRROR_HELP, "muted"))
-        close = QPushButton("Fechar")
+        close = QPushButton(strings.CLOSE)
         close.clicked.connect(self.accept)
         box.addLayout(row(close))
 
