@@ -5,6 +5,13 @@ Todas as mudanças importantes deste projeto são anotadas aqui.
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/), e as versões seguem
 o [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
+## [0.1.0-rc.5] - 2026-10-04
+
+### Corrigido
+
+- Quando o arquivo de dados é de uma versão mais nova e o LotoConfere se recusa a abri-lo, o
+  arquivo agora é liberado na hora, em vez de continuar bloqueado no Windows.
+
 ## [0.1.0-rc.4] - 2026-10-03
 
 ### Alterado
